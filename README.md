@@ -25,6 +25,8 @@ regel code uit dat project overgenomen**; zie "Herkomst" onderaan.
    goedkeuring aan. Jij keurt goed, of stuurt hem terug naar de agent met uitleg.
 5. **Logboek** — elke start, uitkomst, goedkeuring en fout staat in het logboek.
 
+![Een taak: overleg met de agent, de runs en het nakijk-paneel](docs/screenshots/taak.png)
+
 Daarnaast: **routines** (terugkerend werk dat zelf taken aanmaakt), **budgetten**
 (een agent wordt automatisch gepauzeerd als zijn maandbudget op is), en een **live
 kanaal** zodat de pagina zichzelf bijwerkt terwijl een agent bezig is.
