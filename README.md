@@ -20,10 +20,11 @@
 
 <p align="center">
   <a href="docs/ploegbaas-rondleiding.mp4">
-    <img src="docs/screenshots/kaart-titel.png" alt="Bekijk de rondleiding (52 seconden)" width="76%">
+    <img src="docs/screenshots/kaart-titel.png" alt="Bekijk de rondleiding met voice-over (55 seconden)" width="76%">
   </a>
   <br>
-  <sub>Klik op het beeld voor de <b>rondleiding van 52 seconden</b> door de app (MP4, 1280×720, demo-gegevens).</sub>
+  <sub>Klik op het beeld voor de <b>rondleiding van 55 seconden</b> door de app — met Nederlandse
+  voice-over en een rustige muziekbed (MP4, 1280×720, demo-gegevens).</sub>
 </p>
 
 Alles in het Nederlands, met een eigen huisstijl. Eén Node-server (`node:http`,
@@ -237,8 +238,9 @@ public/index.html                 de hele pagina (HTML + CSS + JavaScript, geen 
 deploy/systemd/                   service-eenheid voor een container of VM
 deploy/proxmox/                   de installatiekit: one-liner, container, inrichten, controle, diagnose
 scripts/in-beeld.js               maakt de schermafbeeldingen, de kaarten en de videoframes
+scripts/maak-video.py             zet de rondleiding in elkaar: beeld, stem en muziekbed
 docs/kaarten.html                 de bron van de omslag, de titelkaart en de slotkaart
-docs/ploegbaas-rondleiding.mp4    de rondleiding (52 s, 1280×720)
+docs/ploegbaas-rondleiding.mp4    de rondleiding (55 s, 1280×720, met voice-over)
 docs/screenshots/                 alle schermafbeeldingen uit deze README
 data/                             database, wachtwoord, run-logs (horen niet in git)
 ```
@@ -258,12 +260,15 @@ node scripts/in-beeld.js --modus video    # tmp-video/frames.txt met de echte ti
 ffmpeg -y -f concat -safe 0 -i tmp-video/frames.txt \
   -vf 'scale=1280:672,setsar=1,fps=30' -c:v libx264 -preset medium -crf 17 \
   -pix_fmt yuv420p tmp-video/inhoud.mp4
+python3 scripts/maak-video.py             # titelkaart + beeld + slotkaart, met stem en muziek
 ```
 
-Daarna de titel- en slotkaart ervoor en erachter (zie de kop van `scripts/in-beeld.js`).
-Het script logt in via het inlogformulier, loopt de schermen langs, en stopt met een
-foutmelding — inclusief de JS-fouten en de laatste API-antwoorden — als een scherm niet
-verschijnt.
+`scripts/in-beeld.js` logt in via het inlogformulier, loopt de schermen langs, en stopt met
+een foutmelding — inclusief de JS-fouten en de laatste API-antwoorden — als een scherm niet
+verschijnt. `scripts/maak-video.py` rekent uit hoelang elk scherm in beeld blijft: het rekt
+een scherm op tot de ingesproken zin erin past, zodat de stem nooit over het volgende
+scherm heen valt. De ingesproken zinnen staan in `tmp-video/stem/n01..n10.mp3` (buiten git);
+maak ze opnieuw met de tekst uit `scripts/maak-video.py`.
 
 ## Herkomst en licentie
 

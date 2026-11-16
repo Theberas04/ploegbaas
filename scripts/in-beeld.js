@@ -234,8 +234,11 @@ async function modusPlaten() {
 }
 
 async function modusVideo() {
-  fs.rmSync(FRAMES, { recursive: true, force: true });
-  fs.mkdirSync(FRAMES, { recursive: true });
+  // Alleen de frames en het profiel opruimen — niet de hele map: daarin staat
+  // ook de ingesproken tekst (tmp-video/stem), en die wil je niet elke opname
+  // opnieuw hoeven inspreken.
+  fs.rmSync(path.join(FRAMES, 'frames'), { recursive: true, force: true });
+  fs.mkdirSync(path.join(FRAMES, 'frames'), { recursive: true });
   zeg('video: browser starten…');
   const chrome = startBrowser(1440, 900);
   try {
@@ -286,6 +289,14 @@ async function modusVideo() {
     const t0 = Date.now();
     const merken = {};
     const merk = (naam) => { merken[naam] = Date.now() - t0; };
+
+    // Pas inloggen als er echt een frame binnen is: de allereerste
+    // schermafbeelding blijft soms seconden hangen, en loggen we meteen in, dan
+    // zit het inlogscherm niet in de opname en praat de eerste zin over het
+    // dashboard.
+    const wachtSinds = Date.now();
+    while (!frames.length && Date.now() - wachtSinds < 20000) await wacht(200);
+    zeg(`video: eerste frame na ${((Date.now() - wachtSinds) / 1000).toFixed(1)}s — nu inloggen`);
 
     await inloggen(c);
     merk('inloggen');
