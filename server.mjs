@@ -484,6 +484,172 @@ function taakMetRelaties(id) {
 
 // --- routes -----------------------------------------------------------------
 // --- versie en bijwerken -----------------------------------------------------
+// --- agenten koppelen: wat deze machine kan, en een echte proef ---------------
+function vindCommando(naam) {
+  try {
+    // Let op: 'bash -lc' laadt het profiel en dan komt de MOTD van deze container
+    // mee in de uitvoer — dan is het "pad" het hele welkomstscherm. Zonder -l
+    // blijft het antwoord schoon, en pak voor de zekerheid de laatste padregel.
+    const uit = execFileSync('bash', ['-c', `command -v ${naam}`], { encoding: 'utf8', timeout: 4000 });
+    const pad = uit.split('\n').map((r) => r.trim()).filter((r) => r.startsWith('/')).pop();
+    return pad || null;
+  } catch { return null; }
+}
+
+// De aliassen uit ~/.hermes/config.yaml halen zonder yaml-pakket: het blok
+// model_aliases heeft twee spaties per alias en vier per veld.
+function leesHermesConfig() {
+  const kandidaten = [process.env.HERMES_CONFIG, path.join(os.homedir(), '.hermes', 'config.yaml')].filter(Boolean);
+  for (const bestand of kandidaten) {
+    let tekst;
+    try { tekst = fs.readFileSync(bestand, 'utf8'); } catch { continue; }
+    const aliassen = [];
+    let standaard = '';
+    let inAliassen = false;
+    let inModel = false;
+    let huidig = null;
+    for (const regel of tekst.split('\n')) {
+      if (/^model_aliases:\s*$/.test(regel)) { inAliassen = true; inModel = false; continue; }
+      if (/^model:\s*$/.test(regel)) { inModel = true; inAliassen = false; continue; }
+      if (/^\S/.test(regel) && !/^model_aliases:/.test(regel)) { inAliassen = false; inModel = false; continue; }
+      if (inModel) {
+        const m = regel.match(/^\s+default:\s*["']?([^"'#]+)["']?\s*(#.*)?$/);
+        if (m) standaard = m[1].trim();
+        continue;
+      }
+      if (!inAliassen) continue;
+      const kop = regel.match(/^ {2}([A-Za-z0-9_.-]+):\s*$/);
+      if (kop) { huidig = { naam: kop[1], model: '', provider: '', base_url: '' }; aliassen.push(huidig); continue; }
+      const veld = regel.match(/^ {4}(model|provider|base_url|api_key):\s*["']?([^"'#]*)/);
+      if (veld && huidig) {
+        if (veld[1] !== 'api_key') huidig[veld[1]] = veld[2].trim();
+      }
+    }
+    return { bestand, aliassen: aliassen.filter((a) => a.model), standaard };
+  }
+  return { bestand: null, aliassen: [], standaard: '' };
+}
+
+async function proefLlm(urls) {
+  const lijst = [...new Set((Array.isArray(urls) ? urls : [urls])
+    .map((u) => String(u || '').replace(/\/v1\/?$/, '').replace(/\/$/, ''))
+    .filter(Boolean))];
+  if (!lijst.length) return { bereikbaar: false, url: '', modellen: [] };
+  let laatste = { bereikbaar: false, url: lijst[0], modellen: [] };
+  for (const basis of lijst) {
+    // Niet elk model spreekt dezelfde taal: een llama.cpp-wrapper heeft vaak
+    // alleen /health, Ollama /api/tags, en een OpenAI-compatible server
+    // /v1/models. Vraag ze in die volgorde, met een korte tijdslimiet, en houd
+    // de eerste die antwoordt.
+    let gezond = null;
+    try {
+      const h = await fetch(`${basis}/health`, { signal: AbortSignal.timeout(1500) });
+      if (h.ok) gezond = await h.json().catch(() => ({}));
+    } catch { /* geen /health */ }
+    for (const pad of ['/v1/models', '/api/tags']) {
+      try {
+        const antwoord = await fetch(`${basis}${pad}`, { signal: AbortSignal.timeout(2000) });
+        if (!antwoord.ok) continue;
+        const gegevens = await antwoord.json();
+        const modellen = (gegevens.data || gegevens.models || []).map((m) => m.id || m.name).filter(Boolean).slice(0, 20);
+        return { bereikbaar: true, url: basis, modellen, engine: gezond?.engine || '' };
+      } catch { /* volgende */ }
+    }
+    if (gezond) return { bereikbaar: true, url: basis, modellen: [], engine: gezond.engine || '', versie: gezond.version || '' };
+    laatste = { bereikbaar: false, url: basis, modellen: [], fout: 'antwoordt niet op /health, /v1/models of /api/tags' };
+  }
+  return laatste;
+}
+
+let ontdekCache = { tijd: 0, waarde: null };
+let ontdekBezig = null;
+
+async function ontdekKoppeling() {
+  if (ontdekCache.waarde && Date.now() - ontdekCache.tijd < 60_000) return ontdekCache.waarde;
+  if (ontdekBezig) return ontdekBezig;   // twee pagina's tegelijk: één keer meten
+  ontdekBezig = ontdekAlles();
+  try {
+    const waarde = await ontdekBezig;
+    ontdekCache = { tijd: Date.now(), waarde };
+    return waarde;
+  } finally { ontdekBezig = null; }
+}
+
+async function ontdekAlles() {
+  const hermesPad = vindCommando('hermes');
+  let hermesVersie = '';
+  if (hermesPad) {
+    try { hermesVersie = execFileSync(hermesPad, ['--version'], { encoding: 'utf8', timeout: 8000 }).split('\n')[0].trim(); }
+    catch { hermesVersie = ''; }
+  }
+  const config = leesHermesConfig();
+  // Loopback eerst (dat is het model op deze machine), dan de adressen uit de
+  // aliassen. De volgorde maakt uit: een model op een andere machine antwoordt
+  // soms traag, en dan lijkt het netwerk stuk terwijl het hier werkt.
+  const llmUrls = [
+    process.env.PLOEGBAAS_LLM_URL,
+    'http://127.0.0.1:11434',
+    ...config.aliassen.map((a) => a.base_url),
+  ];
+  return {
+    hermes: { gevonden: Boolean(hermesPad), pad: hermesPad || '', versie: hermesVersie },
+    modellen: config.aliassen,
+    standaard_model: config.standaard,
+    config_bestand: config.bestand,
+    llm: await proefLlm(llmUrls),
+    node: process.version,
+  };
+}
+
+let proefLoopt = false;
+async function agentProef(lijf) {
+  if (proefLoopt) throw new Error('Er loopt al een proef; wacht tot die klaar is.');
+  proefLoopt = true;
+  const begin = Date.now();
+  const zin = 'Antwoord met precies één woord: ok';
+  try {
+    const adapter = mag(lijf.adapter, ['hermes', 'opdracht', 'http'], 'hermes');
+    const config = lijf.adapter_config || {};
+    if (adapter === 'http') {
+      const url = String(config.url || '').trim();
+      if (!url) throw new Error('Vul eerst het adres van je endpoint in.');
+      const antwoord = await fetch(url, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ proef: true, omschrijving: zin }),
+        signal: AbortSignal.timeout(30_000),
+      });
+      const tekst = await antwoord.text();
+      return { ok: antwoord.ok, duur_ms: Date.now() - begin, code: antwoord.status, uitvoer: schoonUitvoer(tekst).slice(-1200) };
+    }
+    const args = Array.isArray(config.args) ? [...config.args] : (adapter === 'hermes' ? ['chat', '-q'] : []);
+    if (adapter === 'hermes' && lijf.model) args.push('-m', String(lijf.model));
+    args.push(zin);
+    const commando = String(config.commando || (adapter === 'hermes' ? 'hermes' : 'bash')).trim() || 'bash';
+    return await new Promise((af, mis) => {
+      let uitvoer = '';
+      const kind = spawn(commando, args, {
+        cwd: config.map || HIER,
+        env: { ...process.env, ...(config.omgeving || {}), TZ, PLOEGBAAS_TAAK_OMSCHRIJVING: zin, PLOEGBAAS_PROEF: '1' },
+      });
+      const timer = setTimeout(() => kind.kill('SIGTERM'), 90_000);
+      kind.stdout.on('data', (s) => { uitvoer += s.toString(); });
+      kind.stderr.on('data', (s) => { uitvoer += s.toString(); });
+      kind.on('error', (fout) => { clearTimeout(timer); mis(new Error(`kon ${commando} niet starten: ${fout.message}`)); });
+      kind.on('close', (code, signaal) => {
+        clearTimeout(timer);
+        const schoon = schoonUitvoer(uitvoer).slice(-1200);
+        if (signaal === 'SIGTERM') {
+          return af({ ok: false, duur_ms: Date.now() - begin, code: -1, uitvoer: schoon,
+            fout: 'De proef is na 90 seconden gestopt. Met een eigen lokaal model kan dat gebeuren; kies dan een sneller model of test met een eigen commando.' });
+        }
+        af({ ok: code === 0, duur_ms: Date.now() - begin, code: code ?? -1, uitvoer: schoon });
+      });
+    });
+  } finally {
+    proefLoopt = false;
+  }
+}
+
 // Waar de code vandaan komt: dezelfde repo als de installatiekit.
 const REPO = process.env.PLOEGBAAS_REPO || 'Theberas04/ploegbaas';
 const TAK = process.env.PLOEGBAAS_TAK || 'main';
@@ -700,6 +866,19 @@ async function verwerk(verzoek, antwoord) {
       const id = rij();
       logActiviteit('agent', `${lijf.naam} is aangenomen als ${lijf.rol || 'algemeen'}.`, { agentId: id });
       return stuur(antwoord, 201, db.prepare('SELECT * FROM agent WHERE id = ?').get(id));
+    }
+    // Wat deze machine kan (hermes gevonden? welke modellen?) en een echte proef
+    // voordat je een agent koppelt.
+    if (delen[1] === 'agenten' && methode === 'GET' && delen[2] === 'ontdek') {
+      return stuur(antwoord, 200, await ontdekKoppeling());
+    }
+    if (delen[1] === 'agenten' && methode === 'POST' && delen[2] === 'proef') {
+      const lijf = await leesLijf(verzoek);
+      try {
+        return stuur(antwoord, 200, await agentProef(lijf));
+      } catch (proeffout) {
+        return fout(antwoord, 400, proeffout.message);
+      }
     }
     const agent = db.prepare('SELECT * FROM agent WHERE id = ?').get(Number(delen[2]));
     if (!agent) return fout(antwoord, 404, 'Agent bestaat niet.');

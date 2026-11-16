@@ -204,6 +204,19 @@ async function modusStills() {
     }
     // Het inlogscherm: uitloggen via de knop in de zijbalk.
     // Het bijwerkpaneel erbij (met de echte log van de laatste bijwerking).
+    // Het koppelformulier, met een echte proef erin (duurt een paar seconden).
+    await c.naar('#/agenten', `Boolean(document.querySelector('main h1'))`);
+    await c.totVoorwaarde(`Boolean(document.querySelector('.toolbar .knop'))`, 8000);
+    await c.js(`nieuweAgent()`);
+    await c.totVoorwaarde(`Boolean(document.getElementById('a-naam'))`, 10000);
+    await c.js(`document.getElementById('a-naam').value = 'Proefagent'; document.getElementById('a-rol').value = 'proef'; document.getElementById('a-titel').value = 'Test van de koppeling';`);
+    await c.js(`testAgent()`);
+    await c.totVoorwaarde(`Boolean(document.querySelector('#proefuitslag.goed, #proefuitslag.fout'))`, 120000);
+    await c.js(`document.getElementById('proefuitslag').scrollIntoView({ block: 'center' })`);
+    await wacht(800);
+    uit.push({ naam: 'agenten-koppelen', hash: '#/agenten', bytes: await c.scherm(path.join(SCHERMEN, 'agenten-koppelen.png')), geenOverloop: true });
+    await c.js(`sluitAgentFormulier()`);
+
     await c.js(`openBijwerken()`);
     await c.totVoorwaarde(`Boolean(document.querySelector('.bijwerk'))`);
     await wacht(1200);

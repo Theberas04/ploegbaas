@@ -47,6 +47,29 @@
   .logvak{background:#0f172a;color:#d7e3f4;border-radius:10px;padding:12px;font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;max-height:220px;overflow:auto}
   .bijwerk-voet{display:flex;gap:10px;align-items:center;padding:14px 18px;border-top:1px solid var(--lijn);flex-wrap:wrap}
   .bijwerk-voet .rechts{margin-left:auto}
+  /* agent koppelen */
+  .koppel{margin-top:16px;overflow:hidden}
+  .koppel-kop{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--lijn)}
+  .koppel-kop b{font-size:15px}
+  .koppel-kop .rechts{margin-left:auto}
+  .koppel-lijf{padding:16px;display:flex;flex-direction:column;gap:10px}
+  .koppel-lijf .stap{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--zacht);margin-top:6px}
+  .koppel-lijf .stap b{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:999px;
+    background:linear-gradient(180deg,#5ff0e8,#2ea3f2);color:#fff;font-size:11px;margin-right:7px}
+  .adapter-keuze{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px}
+  .adapter-kaart{display:flex;flex-direction:column;gap:5px;text-align:left;background:#fbfdff;border:1.5px solid var(--lijn);
+    border-radius:12px;padding:12px;cursor:pointer;color:var(--tekst);transition:border-color .15s,background .15s}
+  .adapter-kaart:hover{border-color:#bcd9f2;background:#f7fbff}
+  .adapter-kaart.aan{border-color:var(--accent);background:linear-gradient(180deg,#f2fbff,#ffffff);box-shadow:0 0 0 3px #e8f4fe}
+  .adapter-kaart b{font-size:13.5px}
+  .adapter-kaart span{font-size:12px;color:var(--zacht);line-height:1.45}
+  .adapter-kaart em{font-size:11.5px;color:var(--diep);font-style:normal;margin-top:2px}
+  .adaptervelden{background:#fbfdff;border:1px dashed var(--lijn);border-radius:12px;padding:12px;margin-top:2px}
+  .proef{background:#fbfdff;border:1px solid var(--lijn);border-radius:12px;padding:12px;font-size:13px}
+  .proef.goed{background:#f2fbf5;border-color:#bfe8ce}
+  .proef.fout{background:#fdf4f4;border-color:#f3c9c9}
+  .koppel-voet{display:flex;gap:10px;align-items:center;padding:13px 16px;border-top:1px solid var(--lijn);flex-wrap:wrap}
+  .koppel-voet .rechts{margin-left:auto}
   /* hoofd */
   main{flex:1;min-width:0;padding:22px 26px 60px}
   h1{font-size:22px;margin:0 0 4px;letter-spacing:-.3px}
@@ -120,6 +143,7 @@ const S = {
   pad: location.hash.replace(/^#/, '') || '/dashboard',
   ingelogd: null, overzicht: null, taken: [], agenten: [], runs: [], goedkeuringen: [],
   routines: [], activiteit: [], bedrijven: [], taak: null, runLog: null, filterStatus: '', zoek: '',
+  ontdek: null, agentAdapter: null,
   versie: null, bijwerkenOpen: false, bijwerkLog: null, pollt: false,
 };
 
@@ -421,10 +445,15 @@ async function herenig(id) {
 }
 
 function tekenAgenten() {
+  zorgOntdek();
+  const o = S.ontdek;
   return `<main>
     <h1>Agenten</h1>
-    <p class="onder">Elke agent heeft een rol, een adapter (hoe hij werkt) en eventueel een budget.</p>
-    <div class="toolbar"><button class="knop" onclick="nieuweAgent()">Agent aannemen</button></div>
+    <p class="onder">Koppelen in vier stappen: hoe hij werkt, wie hij is, waarmee en hoeveel — en dan een echte proef.</p>
+    <div class="toolbar"><button class="knop" onclick="nieuweAgent()">Agent koppelen</button>
+      ${o ? `<span class="rechtstoolbar zacht" style="font-size:12px;margin-left:12px">${
+        o.hermes.gevonden ? 'Hermes gevonden: ' + esc(o.hermes.versie || o.hermes.pad) : 'Hermes niet gevonden op deze machine'
+      }${o.llm && o.llm.bereikbaar ? ' · eigen model op ' + esc(o.llm.url) : ''}</span>` : ''}</div>
     <div class="paneel"><table>
       <thead><tr><th>Agent</th><th>Adapter</th><th>Model</th><th>Hartslag</th><th>Status</th><th>Laatste run</th><th></th></tr></thead>
       <tbody>${S.agenten.map((a) => `<tr>
@@ -439,7 +468,7 @@ function tekenAgenten() {
             : `<button class="knop los klein" onclick="agentActie(${a.id},'hervat')">hervat</button>`}
           <button class="knop los klein" onclick="wek(${a.id})">wek</button>
           <button class="knop los klein" onclick="bewerkAgent(${a.id})">bewerk</button>
-        </td></tr>`).join('')}</tbody></table></div>
+        </td></tr>`).join('') || '<tr><td colspan="7" class="leeg">Nog geen agenten. Koppel er een met de knop hierboven.</td></tr>'}</tbody></table></div>
     <div id="agentformulier"></div>
     <h2>Wat de adapters doen</h2>
     <div class="paneel" style="padding:16px">
@@ -450,67 +479,215 @@ function tekenAgenten() {
   </main>`;
 }
 
-function agentVelden(a = {}) {
-  const c = a.adapter_config ? JSON.parse(a.adapter_config) : {};
-  return `
-    <div class="rij">
-      <div class="veld"><label>Naam</label><input id="a-naam" value="${esc(a.naam || '')}"></div>
-      <div class="veld"><label>Rol</label><input id="a-rol" value="${esc(a.rol || 'algemeen')}"></div>
+const AGENT_ADAPTERS = [
+  { id: 'hermes', naam: 'Hermes Agent op deze machine', zin: 'Start de Hermes-CLI met de taak als opdracht. Zo werken de agents hier.' },
+  { id: 'opdracht', naam: 'Een eigen commando', zin: 'Draait je eigen script of CLI; de taak komt mee als argument en in PLOEGBAAS_TAAK_OMSCHRIJVING.' },
+  { id: 'http', naam: 'Een eigen endpoint', zin: 'Stuurt de taak als JSON naar je eigen adres en leest het antwoord als uitkomst.' },
+];
+
+function adapterStand(id) {
+  const o = S.ontdek;
+  if (id === 'hermes') {
+    if (!o) return 'even kijken…';
+    return o.hermes.gevonden
+      ? `gevonden: ${o.hermes.versie || o.hermes.pad}`
+      : 'niet gevonden op deze machine';
+  }
+  if (id === 'opdracht') return 'elk programma dat op deze machine staat';
+  return 'elk adres dat JSON aanneemt';
+}
+
+// Wat deze machine kan (hermes? modellen? eigen model?) — lui opgehaald zodra je
+// de agentenpagina opent, zodat het dashboard zelf snel blijft.
+function zorgOntdek() {
+  if (S.ontdek || S.ontdekBezig) return;
+  S.ontdekBezig = true;
+  api('/agenten/ontdek')
+    .then((o) => {
+      S.ontdek = o;
+      S.ontdekBezig = false;
+      if (S.pad.startsWith('/agenten')) teken();
+    })
+    .catch(() => { S.ontdekBezig = false; });
+}
+
+function agentFormulier(a = {}) {
+  const c = a.adapter_config ? JSON.parse(a.adapter_config || '{}') : {};
+  const adapter = a.adapter || S.agentAdapter || 'hermes';
+  S.agentAdapter = adapter;
+  const o = S.ontdek || {};
+  const aliasLijst = (o.modellen || []).map((m) => `<option value="${esc(m.naam)}">${esc(m.model)}${m.provider ? ' · ' + esc(m.provider) : ''}</option>`).join('');
+  const args = Array.isArray(c.args) ? c.args.join(' ') : (adapter === 'hermes' ? 'chat -q' : '');
+  return `<div class="paneel koppel">
+    <div class="koppel-kop"><b>${a.id ? esc(a.naam) + ' aanpassen' : 'Een agent koppelen'}</b>
+      <span class="rechts"><button class="knop los klein" onclick="sluitAgentFormulier()">Sluiten</button></span></div>
+    <div class="koppel-lijf">
+      <div class="stap"><b>1</b> Hoe werkt deze agent?</div>
+      <div class="adapter-keuze">${AGENT_ADAPTERS.map((x) => `<button class="adapter-kaart ${adapter === x.id ? 'aan' : ''}" data-adapter="${x.id}" onclick="kiesAdapter('${x.id}')">
+        <b>${x.naam}</b><span>${x.zin}</span><em>${esc(adapterStand(x.id))}</em></button>`).join('')}</div>
+      <input type="hidden" id="a-adapter" value="${adapter}">
+
+      <div id="velden-hermes" class="adaptervelden" style="display:${adapter === 'hermes' ? 'block' : 'none'}">
+        <div class="veld"><label>Commando</label>
+          <input id="a-commando-h" value="${esc(c.commando || 'hermes')}" placeholder="hermes">
+          <div class="zacht" style="font-size:12px;margin-top:6px">Laat staan op <code>hermes</code>, tenzij je een eigen installatie gebruikt.</div></div>
+      </div>
+      <div id="velden-opdracht" class="adaptervelden" style="display:${adapter === 'opdracht' ? 'block' : 'none'}">
+        <div class="rij">
+          <div class="veld"><label>Commando</label><input id="a-commando-o" value="${esc(c.commando || '')}" placeholder="/home/iemand/mijn-script.sh"></div>
+          <div class="veld"><label>Argumenten (spatie ertussen)</label><input id="a-args-o" value="${esc(args)}" placeholder="--stil"></div>
+        </div>
+        <div class="zacht" style="font-size:12px">De opdracht komt als laatste argument mee, en als <code>PLOEGBAAS_TAAK_OMSCHRIJVING</code> in de omgeving.</div>
+      </div>
+      <div id="velden-http" class="adaptervelden" style="display:${adapter === 'http' ? 'block' : 'none'}">
+        <div class="veld"><label>Adres</label><input id="a-url-w" value="${esc(c.url || '')}" placeholder="http://192.168.1.50:8080/taak">
+          <div class="zacht" style="font-size:12px;margin-top:6px">Ploegbaas stuurt de taak als JSON en leest het antwoord als uitkomst.</div></div>
+      </div>
+
+      <div class="stap"><b>2</b> Wie is het?</div>
+      <div class="rij">
+        <div class="veld"><label>Naam</label><input id="a-naam" value="${esc(a.naam || '')}" placeholder="bijv. Wout"></div>
+        <div class="veld"><label>Rol</label><input id="a-rol" value="${esc(a.rol || 'algemeen')}"></div>
+      </div>
+      <div class="veld"><label>Titel</label><input id="a-titel" value="${esc(a.titel || '')}" placeholder="bijv. Website-beheerder"></div>
+
+      <div class="stap"><b>3</b> Waarmee en hoeveel?</div>
+      <div class="rij">
+        <div class="veld"><label>Model</label>
+          <input id="a-model" list="modellen" value="${esc(a.model || '')}" placeholder="${esc(o.standaard_model || 'laat leeg voor eigen keuze')}">
+          <datalist id="modellen">${aliasLijst}</datalist></div>
+        <div class="veld"><label>Budget per maand (euro, 0 = geen)</label><input id="a-budget" type="number" value="${((a.budget_maand_centen || 0) / 100).toFixed(0)}"></div>
+      </div>
+      <div class="zacht" style="font-size:12px">${(o.modellen || []).length
+        ? 'Aliassen op deze machine: ' + o.modellen.map((m) => `<code>${esc(m.naam)}</code>`).join(', ') + '. Je mag ook een eigen modelnaam typen.'
+        : 'Geen aliassen gevonden in <code>~/.hermes/config.yaml</code>; typ de modelnaam die de agent moet gebruiken.'}</div>
+      <div class="rij">
+        <div class="veld"><label>Hartslag</label><select id="a-hartslag">
+          <option value="0" ${!a.heartbeat_aan ? 'selected' : ''}>uit</option>
+          <option value="1" ${a.heartbeat_aan ? 'selected' : ''}>aan</option></select></div>
+        <div class="veld"><label>Elke (minuten)</label><input id="a-minuten" type="number" value="${a.heartbeat_minuten || 30}"></div>
+        <div class="veld"><label>Tijdslimiet (seconden)</label><input id="a-timeout" type="number" value="${c.timeout_seconden || 1800}"></div>
+      </div>
+
+      <div class="stap"><b>4</b> Testen, dan koppelen</div>
+      <div id="proefuitslag" class="proef zacht">Nog niet getest. Met <b>Testen</b> laat je deze agent één echte opdracht van drie woorden uitvoeren.</div>
     </div>
-    <div class="veld"><label>Titel</label><input id="a-titel" value="${esc(a.titel || '')}" placeholder="bijv. Website-beheerder"></div>
-    <div class="rij">
-      <div class="veld"><label>Adapter</label><select id="a-adapter">
-        ${['hermes', 'opdracht', 'http'].map((s) => `<option value="${s}" ${a.adapter === s ? 'selected' : ''}>${s}</option>`).join('')}
-      </select></div>
-      <div class="veld"><label>Model (optioneel)</label><input id="a-model" value="${esc(a.model || '')}" placeholder="laat leeg voor eigen keuze"></div>
+    <div class="koppel-voet">
+      <button class="knop los" id="proefknop" onclick="testAgent()">Testen</button>
+      <button class="knop" onclick="bewaarAgent(${a.id || 0})">${a.id ? 'Opslaan' : 'Koppelen'}</button>
+      <span class="rechts zacht" style="font-size:12px">De proef kost één run van een paar seconden (of langer bij een eigen model).</span>
     </div>
-    <div class="rij">
-      <div class="veld"><label>Commando</label><input id="a-commando" value="${esc(c.commando || 'hermes')}"></div>
-      <div class="veld"><label>Of endpoint (http)</label><input id="a-url" value="${esc(c.url || '')}" placeholder="http://127.0.0.1:8080/taak"></div>
-    </div>
-    <div class="rij">
-      <div class="veld"><label>Hartslag</label><select id="a-hartslag">
-        <option value="0" ${!a.heartbeat_aan ? 'selected' : ''}>uit</option>
-        <option value="1" ${a.heartbeat_aan ? 'selected' : ''}>aan</option></select></div>
-      <div class="veld"><label>Elke (minuten)</label><input id="a-minuten" type="number" value="${a.heartbeat_minuten || 30}"></div>
-      <div class="veld"><label>Budget per maand (euro)</label><input id="a-budget" type="number" value="${((a.budget_maand_centen || 0) / 100).toFixed(0)}"></div>
-    </div>`;
+  </div>`;
+}
+
+function kiesAdapter(id) {
+  S.agentAdapter = id;
+  const verborgen = document.getElementById('a-adapter');
+  if (verborgen) verborgen.value = id;
+  document.querySelectorAll('.adapter-kaart').forEach((k) => k.classList.toggle('aan', k.dataset.adapter === id));
+  for (const x of ['hermes', 'opdracht', 'http']) {
+    const vak = document.getElementById('velden-' + x);
+    if (vak) vak.style.display = x === id ? 'block' : 'none';
+  }
+}
+
+function sluitAgentFormulier() {
+  const vak = document.getElementById('agentformulier');
+  if (vak) vak.innerHTML = '';
+  S.agentAdapter = null;
 }
 
 function nieuweAgent() {
-  document.getElementById('agentformulier').innerHTML = `<div class="paneel" style="margin-top:16px;padding:16px">
-    <h2 style="margin-top:0">Agent aannemen</h2>${agentVelden()}
-    <button class="knop" onclick="bewaarAgent()">Aannemen</button>
-    <button class="knop los" onclick="document.getElementById('agentformulier').innerHTML=''">Annuleren</button></div>`;
-}
-function bewerkAgent(id) {
-  const a = S.agenten.find((x) => x.id === id);
-  document.getElementById('agentformulier').innerHTML = `<div class="paneel" style="margin-top:16px;padding:16px">
-    <h2 style="margin-top:0">${esc(a.naam)} aanpassen</h2>${agentVelden(a)}
-    <button class="knop" onclick="bewaarAgent(${id})">Opslaan</button>
-    <button class="knop los" onclick="document.getElementById('agentformulier').innerHTML=''">Annuleren</button></div>`;
+  zorgOntdek();
+  S.agentAdapter = null;
+  document.getElementById('agentformulier').innerHTML = agentFormulier();
   document.getElementById('agentformulier').scrollIntoView({ behavior: 'smooth' });
 }
-async function bewaarAgent(id) {
-  const c = { commando: document.getElementById('a-commando').value.trim(), args: ['chat', '-q'] };
-  const url = document.getElementById('a-url').value.trim();
-  if (url) c.url = url;
-  const lijf = {
-    naam: document.getElementById('a-naam').value.trim(),
-    rol: document.getElementById('a-rol').value.trim(),
-    titel: document.getElementById('a-titel').value.trim(),
+
+function bewerkAgent(id) {
+  const a = S.agenten.find((x) => x.id === id);
+  S.agentAdapter = a.adapter;
+  document.getElementById('agentformulier').innerHTML = agentFormulier(a);
+  document.getElementById('agentformulier').scrollIntoView({ behavior: 'smooth' });
+}
+
+function adapterConfigUitVelden() {
+  const a = document.getElementById('a-adapter').value;
+  const timeout = Number(document.getElementById('a-timeout')?.value || 1800);
+  if (a === 'http') return { url: document.getElementById('a-url-w').value.trim(), timeout_seconden: timeout };
+  if (a === 'opdracht') {
+    const argsTekst = (document.getElementById('a-args-o').value || '').trim();
+    return {
+      commando: document.getElementById('a-commando-o').value.trim(),
+      args: argsTekst ? argsTekst.split(/\s+/) : [],
+      timeout_seconden: timeout,
+    };
+  }
+  return {
+    commando: document.getElementById('a-commando-h').value.trim() || 'hermes',
+    args: ['chat', '-q'],
+    timeout_seconden: timeout,
+  };
+}
+
+function proefLijf() {
+  return {
     adapter: document.getElementById('a-adapter').value,
     model: document.getElementById('a-model').value.trim(),
+    adapter_config: adapterConfigUitVelden(),
+  };
+}
+
+function toonProef(r) {
+  const vak = document.getElementById('proefuitslag');
+  if (!vak) return;
+  const duur = (Number(r.duur_ms || 0) / 1000).toFixed(1).replace('.', ',');
+  vak.className = 'proef ' + (r.ok ? 'goed' : 'fout');
+  vak.innerHTML = `<b>${r.ok ? 'Deze agent antwoordt' : 'Deze agent antwoordt niet'}</b>
+    <span class="zacht"> · ${duur} s · code ${esc(String(r.code))}</span>
+    ${r.fout ? `<div style="margin-top:6px">${esc(r.fout)}</div>` : ''}
+    ${r.uitvoer ? `<div class="logvak" style="max-height:130px;margin-top:8px">${esc(r.uitvoer)}</div>` : '<div class="zacht" style="margin-top:6px">Geen uitvoer ontvangen.</div>'}`;
+}
+
+async function testAgent() {
+  const knop = document.getElementById('proefknop');
+  const vak = document.getElementById('proefuitslag');
+  if (knop) { knop.disabled = true; knop.textContent = 'Testen…'; }
+  if (vak) { vak.className = 'proef zacht'; vak.textContent = 'Bezig — bij een eigen (lokaal) model kan dit een halve minuut duren.'; }
+  try {
+    toonProef(await api('/agenten/proef', { method: 'POST', lijf: proefLijf() }));
+  } catch (fout) {
+    if (vak) { vak.className = 'proef fout'; vak.textContent = fout.message; }
+  } finally {
+    if (knop) { knop.disabled = false; knop.textContent = 'Testen'; }
+  }
+}
+
+async function bewaarAgent(id) {
+  const lijf = {
+    ...proefLijf(),
+    naam: document.getElementById('a-naam').value.trim(),
+    rol: document.getElementById('a-rol').value.trim() || 'algemeen',
+    titel: document.getElementById('a-titel').value.trim(),
     heartbeat_aan: document.getElementById('a-hartslag').value === '1',
     heartbeat_minuten: Number(document.getElementById('a-minuten').value || 30),
     budget_maand_centen: Math.round(Number(document.getElementById('a-budget').value || 0) * 100),
-    adapter_config: c,
   };
-  if (!lijf.naam) return alert('Geef een naam.');
-  if (id) await api('/agenten/' + id, { method: 'PATCH', lijf });
-  else await api('/agenten', { method: 'POST', lijf });
-  document.getElementById('agentformulier').innerHTML = '';
-  laadAlles();
+  if (!lijf.naam) return alert('Geef de agent eerst een naam.');
+  if (lijf.adapter === 'http' && !lijf.adapter_config.url) return alert('Vul het adres van je endpoint in.');
+  if (lijf.adapter === 'opdracht' && !lijf.adapter_config.commando) return alert('Vul het commando in dat deze agent moet draaien.');
+  const uitslag = document.getElementById('proefuitslag');
+  const getest = uitslag && uitslag.classList.contains('goed');
+  if (!getest) {
+    const door = confirm('Deze agent is nog niet getest. Toch koppelen? Je kunt hem later altijd nog testen.');
+    if (!door) return;
+  }
+  try {
+    if (id) await api('/agenten/' + id, { method: 'PATCH', lijf });
+    else await api('/agenten', { method: 'POST', lijf });
+  } catch (fout) { return alert(fout.message); }
+  sluitAgentFormulier();
+  await laadAlles();
 }
 async function agentActie(id, wat) {
   await api(`/agenten/${id}/${wat}`, { method: 'POST' });
