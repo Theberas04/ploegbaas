@@ -57,6 +57,8 @@ paperclipai/paperclip) — er is **geen regel code uit dat project overgenomen**
 | **Nakijken** — werk waar een agent "klaar" van zegt. | **Inloggen** — één wachtwoord, ondertekende sessiecookie. |
 | ![Bijwerken](docs/screenshots/bijwerken.png) | |
 | **Bijwerken** — de versie die draait, de log van de laatste bijwerking, en één knop om bij te werken of terug te zetten. | |
+| ![Een agent koppelen](docs/screenshots/agenten-koppelen.png) | |
+| **Een agent koppelen** — vier stappen, met een echte proef voordat je hem aanneemt. | |
 
 </details>
 
@@ -77,6 +79,36 @@ paperclipai/paperclip) — er is **geen regel code uit dat project overgenomen**
 Daarnaast: **routines** (terugkerend werk dat zelf taken aanmaakt), **budgetten**
 (een agent wordt automatisch gepauzeerd als zijn maandbudget op is), en een **live
 kanaal** zodat de pagina zichzelf bijwerkt terwijl een agent bezig is.
+
+## Een agent koppelen
+
+Op de pagina **Agenten** staat één knop: *Agent koppelen*. Daarna gaat het in vier
+stappen, zonder dat je hoeft te weten wat een "adapter" is:
+
+1. **Hoe werkt deze agent?** Drie kaarten — *Hermes Agent op deze machine*, *Een eigen
+   commando*, *Een eigen endpoint*. Ploegbaas zoekt zelf uit wat er is en zet dat onder de
+   kaart: welke Hermes-versie er gevonden is, en of je eigen model antwoordt (op
+   `127.0.0.1:11434` of een alias uit `~/.hermes/config.yaml`).
+2. **Wie is het?** Naam, rol en titel.
+3. **Waarmee en hoeveel?** Model (met de aliassen van deze machine als keuzelijst, je mag
+   ook zelf een naam typen), maandbudget, hartslag en tijdslimiet.
+4. **Testen, dan koppelen.** De knop **Testen** laat de agent één echte opdracht uitvoeren —
+   *"Antwoord met precies één woord: ok"* — en toont het oordeel met de duur en de uitvoer:
+
+   > **Deze agent antwoordt** · 8,5 s · code 0
+   > ```
+   > ok
+   > ```
+
+   Klopt het niet, dan zie je de fout en de uitvoer van de agent. Pas daarna klik je op
+   **Koppelen**; zonder geslaagde proef vraagt Ploegbaas eerst of je het zeker weet.
+
+De proef draait echt: bij de `hermes`-adapter start hij dezelfde CLI met dezelfde
+argumenten als een gewone run, bij `opdracht` je eigen commando, en bij `http` een
+`POST {proef:true}` naar je endpoint. Er komt geen taak of run in je lijst van te staan.
+
+API: `GET /api/agenten/ontdek` (wat deze machine kan) en `POST /api/agenten/proef`
+(`{adapter, model, adapter_config}` → `{ok, duur_ms, code, uitvoer}`).
 
 ## Bijwerken vanaf het dashboard
 
@@ -250,6 +282,7 @@ Eerlijke functielijst. **ja** = werkt hier · **deels** = aanwezig met een beper
 | Taken met status, prioriteit, labels en ouder-taak | ja | *nieuw · bezig · nakijken · klaar · geblokkeerd* |
 | Overleg per taak (thread) met de agent | ja | Een bericht van jou zet de taak terug op *nieuw* |
 | Agenten met rol, titel en adapter | ja | `hermes`, `opdracht`, `http` |
+| Een agent koppelen met een invulformulier en een proef | ja | Vier stappen, adapterkeuze als kaarten; de test laat de agent echt één opdracht uitvoeren en toont duur, code en uitvoer |
 | Hartslag: agent pakt zelf toegewezen werk | ja | Elke 15 seconden; één run per agent tegelijk |
 | Runs met volledige log en live bijwerken | ja | Logbestand per run plus een live kanaal (SSE) in de pagina |
 | Meldingen meteen doorgeven aan een webhook | ja | JSON per gebeurtenis, optioneel ondertekend (HMAC-SHA256); de pagina Meldingen toont wat er verstuurd is |
