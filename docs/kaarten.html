@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<title>Ploegbaas — kaarten</title>
+<style>
+  :root{
+    --bg:#f4f7fb; --kaart:#ffffff; --lijn:#e3eaf4; --tekst:#0f172a; --zacht:#5b6b82;
+    --accent:#2ea3f2; --diep:#1e73be;
+  }
+  *{box-sizing:border-box;margin:0}
+  body{font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--tekst)}
+  .vlak{width:100vw;height:100vh;display:grid;place-items:center;position:relative;overflow:hidden}
+
+  /* omslag: licht, zoals de app zelf */
+  .licht{background:
+      radial-gradient(1100px 520px at 82% -12%, #dcefff 0%, rgba(220,239,255,0) 62%),
+      radial-gradient(760px 420px at 8% 108%, #e6fbf8 0%, rgba(230,251,248,0) 60%),
+      var(--bg);
+    grid-template-columns:1.12fr .88fr;align-items:center;gap:52px;padding:64px 70px}
+  .blok{display:flex;flex-direction:column;gap:20px;max-width:620px}
+  .merkrij{display:flex;align-items:center;gap:18px}
+  .naam{font-size:60px;font-weight:800;letter-spacing:-1.6px;line-height:1}
+  .onder{font-size:23px;color:var(--zacht);letter-spacing:-.2px}
+  .punt{display:flex;gap:12px;align-items:flex-start;font-size:19px;color:#25324a}
+  .punt b{color:var(--diep)}
+  .stip{width:9px;height:9px;border-radius:50%;background:var(--accent);margin-top:9px;flex:0 0 9px}
+  .strook{height:9px;border-radius:99px;width:220px;
+    background:linear-gradient(90deg,#5ff0e8,#2ea3f2,#1e73be)}
+  .kaartje{background:var(--kaart);border:1px solid var(--lijn);border-radius:20px;
+    box-shadow:0 20px 60px rgba(15,23,42,.10);padding:22px 24px;display:flex;flex-direction:column;gap:13px}
+  .rij{display:flex;align-items:center;justify-content:space-between;gap:16px}
+  .rij span:first-child{font-size:16px;color:#25324a}
+  .pil{border-radius:99px;padding:3px 11px;font-size:13px;font-weight:600;background:#e7f7ee;color:#15803d}
+  .pil.b{background:#fff4e5;color:#b45309}
+  .pil.v{background:#ede9fe;color:#6d28d9}
+  .mini{font-size:13px;color:var(--zacht);text-transform:uppercase;letter-spacing:.08em}
+
+  /* titel- en slotkaart: donker, zoals een filmkaart hoort */
+  .donker{background:
+      radial-gradient(900px 500px at 78% 8%, rgba(46,163,242,.30), rgba(46,163,242,0) 60%),
+      radial-gradient(700px 420px at 6% 96%, rgba(95,240,232,.18), rgba(95,240,232,0) 60%),
+      #0b1727;color:#fff;padding:70px}
+  .donker .binnen{display:flex;flex-direction:column;gap:22px;max-width:1000px}
+  .donker h1{font-size:74px;font-weight:800;letter-spacing:-2px;line-height:1.02}
+  .donker p{font-size:25px;color:#c9d8ea;max-width:860px}
+  .donker .klein{font-size:19px;color:#8fa6c0}
+  code{font:17px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;background:rgba(255,255,255,.09);
+    border:1px solid rgba(255,255,255,.14);border-radius:12px;padding:14px 18px;color:#dbeafe;
+    white-space:pre-wrap;word-break:break-all}
+</style>
+</head>
+<body>
+<div id="doek"></div>
+<script>
+const LOGO = (maat) => `<svg viewBox="0 0 40 40" width="${maat}" height="${maat}" aria-hidden="true">
+  <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#5ff0e8"/><stop offset=".5" stop-color="#2ea3f2"/><stop offset="1" stop-color="#1e73be"/>
+  </linearGradient></defs>
+  <rect x="2" y="2" width="36" height="36" rx="11" fill="url(#g)"/>
+  <path d="M12 27V13h5.4c3.2 0 5.1 1.6 5.1 4.2 0 2.1-1.2 3.5-3.2 4l4.4 5.8h-4.3l-3.8-5.3H16V27z" fill="#fff"/>
+  <circle cx="28.5" cy="15" r="2.4" fill="#fff" opacity=".85"/></svg>`;
+
+const soort = new URLSearchParams(location.search).get('soort') || 'omslag';
+const doek = document.getElementById('doek');
+
+if (soort === 'omslag') {
+  doek.innerHTML = `<div class="vlak licht">
+    <div class="blok">
+      <div class="merkrij">${LOGO(78)}<div>
+        <div class="naam">Ploegbaas</div>
+        <div class="onder">jouw ploeg AI&#8209;agenten</div>
+      </div></div>
+      <div class="strook"></div>
+      <div class="punt"><i class="stip"></i><span><b>Taak uitzetten</b> — de agent begint meteen, jij kijkt na</span></div>
+      <div class="punt"><i class="stip"></i><span><b>Meldingen</b> komen direct bij je agent binnen</span></div>
+      <div class="punt"><i class="stip"></i><span><b>Eén regel</b> installeren op je eigen Proxmox-server</span></div>
+    </div>
+    <div class="kaartje">
+      <div class="mini">Vandaag</div>
+      <div class="rij"><span>Agenten actief</span><span><b>2</b>/2</span></div>
+      <div class="rij"><span>Runs</span><span><b>5</b></span></div>
+      <div class="rij"><span>Wacht op nakijken</span><span class="pil v">2</span></div>
+      <div class="rij"><span>Geblokkeerd</span><span class="pil b">1</span></div>
+      <div class="rij"><span>Klaar</span><span class="pil">2</span></div>
+    </div>
+  </div>`;
+} else if (soort === 'titel') {
+  doek.innerHTML = `<div class="vlak donker"><div class="binnen">
+    <div style="display:flex;align-items:center;gap:20px">${LOGO(84)}
+      <div style="font-size:44px;font-weight:800;letter-spacing:-1px">Ploegbaas</div></div>
+    <h1>Je eigen dashboard om<br>een ploeg agenten<br>aan het werk te zetten</h1>
+    <p>Taken uitzetten, agenten met hun eigen adapter, runs met volledige log,
+      nakijken en goedkeuren — in één eigen huis.</p>
+    <div class="klein">Rondleiding door de app · demo&#8209;gegevens</div>
+  </div></div>`;
+} else {
+  doek.innerHTML = `<div class="vlak donker"><div class="binnen">
+    <div style="display:flex;align-items:center;gap:18px">${LOGO(66)}
+      <div style="font-size:32px;font-weight:800;letter-spacing:-.6px">Ploegbaas</div></div>
+    <h1 style="font-size:56px">Zet het op je eigen server</h1>
+    <code>bash -c "$(curl -fsSL https://raw.githubusercontent.com/Theberas04/ploegbaas/main/deploy/proxmox/install.sh)"</code>
+    <p style="font-size:21px">Node + SQLite, geen npm&#8209;afhankelijkheden · Nederlandse bediening</p>
+    <div class="klein">github.com/Theberas04/ploegbaas</div>
+  </div></div>`;
+}
+document.body.dataset.klaar = '1';
+</script>
+</body>
+</html>
