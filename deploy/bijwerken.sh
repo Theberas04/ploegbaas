@@ -22,12 +22,36 @@ POORT="${PLOEGBAAS_POORT:-8123}"
 VORIGE="$MAP/.vorige"
 DROOG="${DROOG:-0}"
 NODE_BIN="${NODE_BIN:-$(command -v node || echo /usr/local/bin/node)}"
+LOG="$DATA/bijwerken.log"
 
+mkdir -p "$DATA" 2>/dev/null || true
+# Alles wat dit script zegt gaat naar de log die de pagina laat zien — ook als
+# systemd het script start (dan gaat de uitvoer naar het journaal).
+exec >>"$LOG" 2>&1
 zeg() { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 stop() { zeg "FOUT: $*"; exit "${2:-1}"; }
 
+# Belangrijk: het script moet buiten de cgroup van de service staan. systemd
+# stopt bij een herstart de hele cgroup, en dan sterft dit script halverwege —
+# precies vóór de controle of de nieuwe versie opkomt (en dus ook vóór het
+# terugzetten als het misgaat). systemd-run zet het in een eigen, losse unit.
+if [ "${BIJWERK_BUITEN:-0}" != "1" ] && [ "$DROOG" != "1" ] && command -v systemd-run >/dev/null 2>&1; then
+  RUN=(systemd-run --quiet --collect --unit="ploegbaas-bijwerken-$$"
+       --setenv=BIJWERK_BUITEN=1 --setenv="PLOEGBAAS_MAP=$MAP" --setenv="PLOEGBAAS_DATA=$DATA"
+       --setenv="PLOEGBAAS_REPO=$REPO" --setenv="PLOEGBAAS_TAK=$TAK"
+       --setenv="PLOEGBAAS_SERVICE=$SERVICE" --setenv="PLOEGBAAS_POORT=$POORT")
+  if [ "$(id -u)" != "0" ]; then
+    export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+    RUN+=(--user)
+  fi
+  if "${RUN[@]}" bash "$0" "$@"; then
+    exit 0
+  fi
+  zeg "let op: kon het script niet los van de service starten; het loopt nu mee in de service"
+fi
+
 [ -f "$MAP/server.mjs" ] || stop "geen server.mjs in $MAP (zet PLOEGBAAS_MAP)"
-mkdir -p "$DATA" "$VORIGE" || stop "kan $VORIGE niet maken"
+mkdir -p "$VORIGE" || stop "kan $VORIGE niet maken"
 
 herstart() {
   if systemctl list-unit-files 2>/dev/null | grep -q "^${SERVICE}\.service"; then
