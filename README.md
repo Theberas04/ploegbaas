@@ -55,6 +55,8 @@ paperclipai/paperclip) — er is **geen regel code uit dat project overgenomen**
 | **Meldingen** — het meldkanaal en wat er verstuurd is. | **Logboek** — wie wat startte, wat misging en wie wat goedkeurde. |
 | ![Nakijken](docs/screenshots/nakijken.png) | ![Inloggen](docs/screenshots/inloggen.png) |
 | **Nakijken** — werk waar een agent "klaar" van zegt. | **Inloggen** — één wachtwoord, ondertekende sessiecookie. |
+| ![Bijwerken](docs/screenshots/bijwerken.png) | |
+| **Bijwerken** — de versie die draait, de log van de laatste bijwerking, en één knop om bij te werken of terug te zetten. | |
 
 </details>
 
