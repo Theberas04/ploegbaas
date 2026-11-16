@@ -203,6 +203,13 @@ async function modusStills() {
       uit.push({ naam, hash, bytes, geenOverloop: overloop });
     }
     // Het inlogscherm: uitloggen via de knop in de zijbalk.
+    // Het bijwerkpaneel erbij (met de echte log van de laatste bijwerking).
+    await c.js(`openBijwerken()`);
+    await c.totVoorwaarde(`Boolean(document.querySelector('.bijwerk'))`);
+    await wacht(1200);
+    uit.push({ naam: 'bijwerken', hash: '(paneel)', bytes: await c.scherm(path.join(SCHERMEN, 'bijwerken.png')), geenOverloop: true });
+    await c.js(`sluitBijwerken()`);
+
     await c.js(`uitloggen()`);
     await c.totVoorwaarde(`Boolean(document.querySelector('#w'))`);
     await wacht(900);

@@ -20,6 +20,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -482,6 +483,104 @@ function taakMetRelaties(id) {
 }
 
 // --- routes -----------------------------------------------------------------
+// --- versie en bijwerken -----------------------------------------------------
+// Waar de code vandaan komt: dezelfde repo als de installatiekit.
+const REPO = process.env.PLOEGBAAS_REPO || 'Theberas04/ploegbaas';
+const TAK = process.env.PLOEGBAAS_TAK || 'main';
+const VERSIE_BESTAND = path.join(DATA, 'geinstalleerd.json');
+const BIJWERK_LOG = path.join(DATA, 'bijwerken.log');
+const BIJWERK_PID = path.join(DATA, 'bijwerken.pid');
+
+function leesJsonBestand(pad, standaard = null) {
+  try { return JSON.parse(fs.readFileSync(pad, 'utf8')); } catch { return standaard; }
+}
+
+let gitStand = null;
+function uitGit() {
+  if (gitStand !== null) return gitStand;
+  try {
+    const sha = execFileSync('git', ['-C', HIER, 'rev-parse', 'HEAD'], { encoding: 'utf8', timeout: 4000 }).trim();
+    const regel = execFileSync('git', ['-C', HIER, 'log', '-1', '--format=%cI%x09%s'], { encoding: 'utf8', timeout: 4000 }).trim();
+    const [datum, bericht] = regel.split('\t');
+    gitStand = { sha, kort: sha.slice(0, 7), datum, bericht, bron: 'git' };
+  } catch { gitStand = {}; }
+  return gitStand;
+}
+
+function huidigeVersie() {
+  const opgeslagen = leesJsonBestand(VERSIE_BESTAND);
+  if (opgeslagen?.sha) return { ...opgeslagen, bron: opgeslagen.bron || REPO };
+  const g = uitGit();
+  if (g.sha) return g;
+  return { sha: '', kort: 'onbekend', datum: null, bericht: '', bron: 'onbekend' };
+}
+
+let laatsteCache = { tijd: 0, waarde: null };
+async function nieuwsteVersie() {
+  if (laatsteCache.waarde && Date.now() - laatsteCache.tijd < 60_000) return laatsteCache.waarde;
+  const antwoord = await fetch(`https://api.github.com/repos/${REPO}/commits/${TAK}`, {
+    headers: { 'User-Agent': 'ploegbaas', Accept: 'application/vnd.github+json' },
+    signal: AbortSignal.timeout(7000),
+  });
+  if (!antwoord.ok) throw new Error(`GitHub antwoordde ${antwoord.status}`);
+  const gegevens = await antwoord.json();
+  const waarde = {
+    sha: gegevens.sha,
+    kort: String(gegevens.sha || '').slice(0, 7),
+    datum: gegevens.commit?.committer?.date || null,
+    bericht: String(gegevens.commit?.message || '').split('\n')[0],
+  };
+  laatsteCache = { tijd: Date.now(), waarde };
+  return waarde;
+}
+
+function bijwerkStand() {
+  let pid = 0;
+  try { pid = Number(fs.readFileSync(BIJWERK_PID, 'utf8').trim() || 0); } catch { pid = 0; }
+  let bezig = false;
+  if (pid > 0) { try { process.kill(pid, 0); bezig = true; } catch { bezig = false; } }
+  let tekst = '';
+  try { tekst = fs.readFileSync(BIJWERK_LOG, 'utf8'); } catch { tekst = ''; }
+  return { bezig, pid, tekst: tekst.length > 12000 ? tekst.slice(-12000) : tekst, klaar: !bezig && /KLAAR/.test(tekst) };
+}
+
+async function versieOverzicht() {
+  const huidig = huidigeVersie();
+  let laatste = null;
+  let melding = null;
+  try { laatste = await nieuwsteVersie(); } catch (fout) { melding = fout.message; }
+  return {
+    huidig,
+    laatste,
+    beschikbaar: Boolean(huidig.sha && laatste?.sha && huidig.sha !== laatste.sha),
+    fout: melding,
+    repo: REPO,
+    tak: TAK,
+    kanBijwerken: fs.existsSync(path.join(HIER, 'deploy', 'bijwerken.sh')),
+    bezig: bijwerkStand().bezig,
+  };
+}
+
+async function startBijwerken(antwoord, terug = false) {
+  const stand = bijwerkStand();
+  if (stand.bezig) return fout(antwoord, 409, 'Er loopt al een bijwerking.');
+  const script = path.join(HIER, 'deploy', 'bijwerken.sh');
+  if (!fs.existsSync(script)) return fout(antwoord, 400, 'deploy/bijwerken.sh ontbreekt in deze installatie.');
+  fs.writeFileSync(BIJWERK_LOG, '');
+  const uit = fs.openSync(BIJWERK_LOG, 'a');
+  // setsid: het script moet doorlopen als de service stopt om te herstarten.
+  const kind = spawn('setsid', ['bash', script, ...(terug ? ['--terug'] : [])], {
+    cwd: HIER,
+    detached: true,
+    stdio: ['ignore', uit, uit],
+    env: { ...process.env, PLOEGBAAS_MAP: HIER, PLOEGBAAS_DATA: DATA, PLOEGBAAS_POORT: String(POORT) },
+  });
+  fs.closeSync(uit);
+  kind.unref();
+  logActiviteit('beheer', terug ? 'Vorige versie terugzetten gestart vanaf het dashboard.' : 'Bijwerken gestart vanaf het dashboard.');
+  return stuur(antwoord, 202, { gestart: true, pid: kind.pid || 0 });
+}
+
 async function verwerk(verzoek, antwoord) {
   const adres = new URL(verzoek.url, `http://${verzoek.headers.host || 'localhost'}`);
   const pad = adres.pathname.replace(/\/+$/, '') || '/';
@@ -742,6 +841,12 @@ async function verwerk(verzoek, antwoord) {
     logActiviteit('instelling', 'Meldkanaal bijgewerkt.');
     return stuur(antwoord, 200, { ok: true, aan: instelling('melden_aan') === '1', kanaal: instelling('meld_kanaal') });
   }
+
+  // ------- versie en bijwerken
+  if (pad === '/api/versie' && methode === 'GET') return stuur(antwoord, 200, await versieOverzicht());
+  if (pad === '/api/bijwerken' && methode === 'POST') return await startBijwerken(antwoord);
+  if (pad === '/api/bijwerken/terug' && methode === 'POST') return await startBijwerken(antwoord, true);
+  if (pad === '/api/bijwerken/log' && methode === 'GET') return stuur(antwoord, 200, bijwerkStand());
 
   // ------- runs
   if (delen[1] === 'runs') {

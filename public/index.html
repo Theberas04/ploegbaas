@@ -30,6 +30,23 @@
   nav a.aan{background:linear-gradient(90deg,#e8f4fe,#f2f9ff);color:var(--diep);font-weight:600}
   nav .kop{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--zacht);margin:14px 10px 4px}
   .tel{background:var(--accent);color:#fff;border-radius:999px;font-size:11px;padding:1px 7px;margin-left:auto}
+  /* versie en bijwerken */
+  .versie-blok{border-top:1px solid var(--lijn);padding-top:12px;margin-bottom:10px;display:flex;flex-direction:column;gap:8px}
+  .versie-blok .rij{display:flex;align-items:center;gap:8px;font-size:13px}
+  .versie-blok code,dd code{font-size:12px;background:#eef4fb;border-radius:6px;padding:1px 6px;color:var(--diep);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .stip-nieuw{width:8px;height:8px;border-radius:999px;background:var(--accent);box-shadow:0 0 0 3px #e8f4fe;flex:0 0 8px}
+  .doek{position:fixed;inset:0;background:rgba(15,23,42,.42);display:flex;align-items:center;justify-content:center;padding:20px;z-index:50}
+  .bijwerk{background:var(--kaart);border-radius:18px;border:1px solid var(--lijn);box-shadow:0 20px 50px rgba(15,23,42,.25);width:min(640px,100%);max-height:88vh;overflow:auto}
+  .bijwerk-kop{display:flex;align-items:center;gap:10px;padding:15px 18px;border-bottom:1px solid var(--lijn)}
+  .bijwerk-kop b{font-size:16px}
+  .bijwerk-kop .rechts{margin-left:auto}
+  .bijwerk-lijf{padding:16px 18px;display:flex;flex-direction:column;gap:14px}
+  .versie-tabel{display:grid;grid-template-columns:auto 1fr;gap:7px 16px;font-size:13px;margin:0}
+  .versie-tabel dt{color:var(--zacht);white-space:nowrap}
+  .versie-tabel dd{margin:0}
+  .logvak{background:#0f172a;color:#d7e3f4;border-radius:10px;padding:12px;font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;max-height:220px;overflow:auto}
+  .bijwerk-voet{display:flex;gap:10px;align-items:center;padding:14px 18px;border-top:1px solid var(--lijn);flex-wrap:wrap}
+  .bijwerk-voet .rechts{margin-left:auto}
   /* hoofd */
   main{flex:1;min-width:0;padding:22px 26px 60px}
   h1{font-size:22px;margin:0 0 4px;letter-spacing:-.3px}
@@ -103,6 +120,7 @@ const S = {
   pad: location.hash.replace(/^#/, '') || '/dashboard',
   ingelogd: null, overzicht: null, taken: [], agenten: [], runs: [], goedkeuringen: [],
   routines: [], activiteit: [], bedrijven: [], taak: null, runLog: null, filterStatus: '', zoek: '',
+  versie: null, bijwerkenOpen: false, bijwerkLog: null, pollt: false,
 };
 
 async function api(pad, opties = {}) {
@@ -157,9 +175,24 @@ function tekenZijbalk() {
       ${link('/meldingen', 'Meldingen')}
     </nav>
     <div style="margin-top:auto">
+      ${tekenVersieBlok()}
       <button class="knop los klein" onclick="uitloggen()" style="width:100%">Uitloggen</button>
     </div>
   </aside>`;
+}
+
+function tekenVersieBlok() {
+  const v = S.versie;
+  const kort = v?.huidig?.kort || 'onbekend';
+  const nieuw = Boolean(v?.beschikbaar);
+  return `<div class="versie-blok">
+    <div class="rij">
+      ${nieuw ? '<span class="stip-nieuw"></span>' : ''}
+      <span class="zacht">versie</span><code>${esc(kort)}</code>
+    </div>
+    ${nieuw ? '<div class="zacht" style="font-size:12px">Er staat een nieuwe versie klaar.</div>' : ''}
+    <button class="knop ${nieuw ? '' : 'los'} klein" onclick="openBijwerken()" style="width:100%">Bijwerken</button>
+  </div>`;
 }
 
 async function uitloggen() { await api('/uitloggen', { method: 'POST' }); S.ingelogd = false; teken(); }
@@ -637,6 +670,86 @@ async function proefMelding() {
   await laadAlles();
 }
 
+function tekenBijwerkenPaneel() {
+  if (!S.bijwerkenOpen) return '';
+  const v = S.versie || {};
+  const h = v.huidig || {};
+  const l = v.laatste || {};
+  const stand = S.bijwerkLog || {};
+  const bezig = Boolean(stand.bezig);
+  return `<div class="doek" onclick="if(event.target===this)sluitBijwerken()">
+    <div class="bijwerk" role="dialog" aria-modal="true" aria-label="Ploegbaas bijwerken">
+      <div class="bijwerk-kop"><b>Bijwerken</b>
+        <span class="rechts"><button class="knop los klein" onclick="sluitBijwerken()">Sluiten</button></span></div>
+      <div class="bijwerk-lijf">
+        <dl class="versie-tabel">
+          <dt>Nu</dt><dd><code>${esc(h.kort || 'onbekend')}</code>${h.datum ? ' · ' + esc(tijd(h.datum)) : ''}${
+            h.bericht ? `<div class="zacht">${esc(h.bericht)}</div>` : ''}</dd>
+          <dt>Nieuwste</dt><dd>${l.kort
+            ? `<code>${esc(l.kort)}</code>${l.datum ? ' · ' + esc(tijd(l.datum)) : ''}${l.bericht ? `<div class="zacht">${esc(l.bericht)}</div>` : ''}`
+            : `<span class="zacht">${esc(v.fout || 'niet op te halen')}</span>`}</dd>
+          <dt>Bron</dt><dd class="zacht">${esc(v.repo || '')} · ${esc(v.tak || '')}</dd>
+        </dl>
+        <p class="zacht" style="margin:0;font-size:13px">Bijwerken haalt de nieuwste versie van GitHub, bewaart de huidige code in
+          <code>.vorige</code> en herstart het dashboard. Wat in <code>data/</code> staat — taken, agenten, runs — blijft
+          staan. Komt de nieuwe versie niet op, dan zet het script zelf de vorige terug.</p>
+        <div class="logvak" id="bijwerklog">${esc(stand.tekst || 'Nog niet bijgewerkt.')}</div>
+      </div>
+      <div class="bijwerk-voet">
+        <button class="knop" id="bijwerkstart" onclick="startBijwerken('nu')" ${bezig || v.kanBijwerken === false ? 'disabled' : ''}>Nu bijwerken</button>
+        <button class="knop los klein" onclick="startBijwerken('terug')" ${bezig ? 'disabled' : ''}>Vorige versie terug</button>
+        <span class="rechts zacht" style="font-size:12px">${bezig ? 'Bezig — de pagina ververst zichzelf zodra het klaar is.'
+          : (v.beschikbaar ? 'Er staat een nieuwe versie klaar.' : 'Je hebt de nieuwste versie.')}</span>
+      </div>
+    </div>
+  </div>`;
+}
+
+function openBijwerken() {
+  S.bijwerkenOpen = true;
+  S.bijwerkLog = null;
+  teken();
+  haalBijwerkLog();
+}
+function sluitBijwerken() { S.bijwerkenOpen = false; teken(); }
+
+async function haalBijwerkLog() {
+  if (!S.bijwerkenOpen) return;
+  const stand = await api('/bijwerken/log').catch(() => null);
+  if (!stand || !S.bijwerkenOpen) return;
+  S.bijwerkLog = stand;
+  const vak = document.getElementById('bijwerklog');
+  if (vak) { vak.textContent = stand.tekst || 'bezig…'; vak.scrollTop = vak.scrollHeight; }
+  const knop = document.getElementById('bijwerkstart');
+  if (knop && stand.bezig) knop.disabled = true;
+}
+
+async function startBijwerken(modus) {
+  const knop = document.getElementById('bijwerkstart');
+  if (knop) { knop.disabled = true; knop.textContent = 'Bezig…'; }
+  try {
+    await api('/bijwerken' + (modus === 'terug' ? '/terug' : ''), { method: 'POST' });
+  } catch (fout) {
+    alert(fout.message);
+    if (knop) { knop.disabled = false; knop.textContent = 'Nu bijwerken'; }
+    return;
+  }
+  wachtOpBijwerken();
+}
+
+// Tijdens de bijwerking herstart de service: een mislukte fetch is dus normaal,
+// en dan proberen we het gewoon opnieuw tot de nieuwe versie antwoordt.
+async function wachtOpBijwerken() {
+  const stand = await api('/bijwerken/log').catch(() => null);
+  if (stand) {
+    S.bijwerkLog = stand;
+    const vak = document.getElementById('bijwerklog');
+    if (vak) { vak.textContent = stand.tekst || 'bezig…'; vak.scrollTop = vak.scrollHeight; }
+    if (stand.klaar) { setTimeout(() => location.reload(), 900); return; }
+  }
+  setTimeout(wachtOpBijwerken, 1500);
+}
+
 function tekenInlog() {
   return `<div class="inlog"><div class="kaart">
     ${tekenMerk()}
@@ -669,16 +782,17 @@ function teken() {
   else if (S.pad.startsWith('/activiteit')) inhoud = tekenActiviteit();
   else if (S.pad.startsWith('/meldingen')) inhoud = tekenMeldingen();
   else inhoud = tekenDashboard();
-  app.innerHTML = tekenZijbalk() + inhoud;
+  app.innerHTML = tekenZijbalk() + inhoud + tekenBijwerkenPaneel();
 }
 
 async function laadAlles() {
   try {
-    const [overzicht, taken, agenten, runs, goedkeuringen, routines, activiteit, meldingen] = await Promise.all([
+    const [overzicht, taken, agenten, runs, goedkeuringen, routines, activiteit, meldingen, versie] = await Promise.all([
       api('/overzicht'), api('/taken'), api('/agenten'), api('/runs?limiet=60'),
       api('/goedkeuringen'), api('/routines'), api('/activiteit'), api('/meldingen'),
+      api('/versie').catch(() => null),
     ]);
-    Object.assign(S, { overzicht, taken, agenten, runs, goedkeuringen, routines, activiteit, meldingen });
+    Object.assign(S, { overzicht, taken, agenten, runs, goedkeuringen, routines, activiteit, meldingen, versie });
     S.ingelogd = true;
     if (S.pad.startsWith('/taken/')) await laadTaak(Number(S.pad.split('/')[2]), false);
     teken();

@@ -76,6 +76,41 @@ Daarnaast: **routines** (terugkerend werk dat zelf taken aanmaakt), **budgetten*
 (een agent wordt automatisch gepauzeerd als zijn maandbudget op is), en een **live
 kanaal** zodat de pagina zichzelf bijwerkt terwijl een agent bezig is.
 
+## Bijwerken vanaf het dashboard
+
+Onderaan de zijbalk staat de versie die draait, en een knop **Bijwerken**. Zodra er op
+GitHub een nieuwe versie staat, verschijnt daar een blauwe stip met "Er staat een nieuwe
+versie klaar" — dan is één klik genoeg.
+
+Wat de knop doet (via `deploy/bijwerken.sh`):
+
+1. haalt de nieuwste code van GitHub (`codeload`-tarball van de tak, standaard `main`);
+2. controleert dat de nieuwe `server.mjs` door `node --check` komt — zakt hij, dan blijft
+   de huidige versie staan en gebeurt er verder niets;
+3. bewaart de huidige code in `ploegbaas/.vorige/`, vervangt `server.mjs`, `public/`,
+   `scripts/` en `deploy/`, en laat `data/` met rust (taken, agenten, runs, wachtwoord);
+4. herstart de service en wacht tot `/api/gezondheid` antwoordt;
+5. komt de nieuwe versie niet op, dan zet het script **zelf de vorige terug** en herstart
+   opnieuw — je houdt dus altijd een werkend dashboard.
+
+De pagina toont de hele log tijdens het bijwerken en ververst zichzelf zodra het klaar is.
+Met de knop **Vorige versie terug** draai je de laatste wijziging terug.
+
+Ook zonder de pagina:
+
+```bash
+bash deploy/bijwerken.sh            # bijwerken en herstarten
+DROOG=1 bash deploy/bijwerken.sh    # halen en controleren, niets aanraken
+bash deploy/bijwerken.sh --terug    # de vorige versie terugzetten
+```
+
+Bijwerken heeft internet naar `github.com` nodig; staat de machine zonder netwerk, dan
+zegt het paneel dat de nieuwste versie niet op te halen is en blijft de knop staan.
+
+API: `GET /api/versie` (wat draait, wat er is, of er iets nieuws is), `POST /api/bijwerken`,
+`POST /api/bijwerken/terug`, `GET /api/bijwerken/log` (de log van de lopende of laatste
+bijwerking).
+
 ## Meldingen: de agent weet het meteen
 
 Er zijn twee kanten aan "meteen":
@@ -218,6 +253,7 @@ Eerlijke functielijst. **ja** = werkt hier · **deels** = aanwezig met een beper
 | Meldingen meteen doorgeven aan een webhook | ja | JSON per gebeurtenis, optioneel ondertekend (HMAC-SHA256); de pagina Meldingen toont wat er verstuurd is |
 | Werk meteen oppakken, zonder wachttijd | ja | Nieuwe taak of goedkeuring start de agent direct (~0,5 s) in plaats van bij de volgende hartslag |
 | Installatie op een Proxmox-server met één regel | ja | `deploy/proxmox/install.sh`: container, service, Hermes Agent erbij en het meldkanaal klaar |
+| Bijwerken vanaf het dashboard | ja | Knop in de zijbalk: haalt de nieuwste versie, controleert haar, bewaart de oude in `.vorige/`, herstart en zet bij een mislukking zichzelf terug |
 | Nakijken en goedkeuren | ja | Goedkeuren of terugsturen met opmerking |
 | Routines (terugkerend werk) | ja | Interval in minuten, met een knop om er nu één te starten |
 | Budgetten met harde stop | deels | Je vult een maandbudget in en Ploegbaas pauzeert de agent als het op is; kosten per run zijn **handmatig** (er is nog geen prijstabel per model) |
@@ -237,6 +273,7 @@ server.mjs                        de hele server: API, hartslag, adapters, uitvo
 public/index.html                 de hele pagina (HTML + CSS + JavaScript, geen bouwstap)
 deploy/systemd/                   service-eenheid voor een container of VM
 deploy/proxmox/                   de installatiekit: one-liner, container, inrichten, controle, diagnose
+deploy/bijwerken.sh               bijwerken vanaf het dashboard (of vanaf de opdrachtregel)
 scripts/in-beeld.js               maakt de schermafbeeldingen, de kaarten en de videoframes
 scripts/maak-video.py             zet de rondleiding in elkaar: beeld, stem en muziekbed
 docs/kaarten.html                 de bron van de omslag, de titelkaart en de slotkaart
