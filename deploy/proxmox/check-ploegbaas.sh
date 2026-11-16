@@ -68,6 +68,37 @@ if [ -n "$IP" ]; then
   [ "$LAN" = "200" ] && goed "bereikbaar op het netwerk (http://$IP:$PB_POORT)" \
     || mis "netwerkadres http://$IP:$PB_POORT gaf $LAN"
 fi
+GW="$(ip route 2>/dev/null | awk '/^default/{print $3; exit}')"
+if [ -n "$GW" ]; then
+  if timeout 2 bash -c "echo > /dev/tcp/$GW/53" 2>/dev/null; then
+    goed "de gateway ($GW) antwoordt via TCP"
+  else
+    letop "de gateway ($GW) antwoordt niet op TCP — controleer de bridge"
+  fi
+fi
+# Let op: met 'set -o pipefail' wordt de status van 'ping | grep' de status van
+# ping (die faalt), ook als grep wél vindt wat we zoeken. Daarom eerst opvangen.
+PING_UIT="$(ping -c1 -W1 127.0.0.1 2>&1 || true)"
+if ping -c1 -W2 1.1.1.1 >/dev/null 2>&1; then
+  goed "pingen werkt (ICMP)"
+elif printf '%s' "$PING_UIT" | grep -q 'not permitted'; then
+  letop "pingen mag niet in deze container (geen cap_net_raw). Zet één keer:
+      sysctl -w net.ipv4.ping_group_range=\"0 2147483647\"
+      en zet die regel in /etc/sysctl.d/90-ploegbaas-ping.conf. TCP-proeven werken wel."
+else
+  letop "geen ping-antwoord van buiten (kan ook aan het netwerk liggen; TCP-proeven werken wel)"
+fi
+SSH_PUB="$([ -f $HOME/.ssh/id_ed25519.pub ] && echo ja || echo nee)"
+if [ "$SSH_PUB" = "ja" ]; then
+  goed "er staat een sleutel voor de agent ($HOME/.ssh/id_ed25519)"
+  if timeout 6 ssh -o BatchMode=yes -o ConnectTimeout=4 root@"${SSH_TEST:-$GW}" true 2>&1 | grep -q 'Permission denied'; then
+    letop "inloggen op ${SSH_TEST:-$GW} lukt nog niet: de publieke sleutel moet daar nog in
+      ~/.ssh/authorized_keys staan. Zet deze regel daar neer:
+      $(cat $HOME/.ssh/id_ed25519.pub)"
+  fi
+else
+  letop "geen sleutel voor de agent gevonden ($HOME/.ssh/id_ed25519.pub)"
+fi
 echo
 
 echo "Werk en ploeg"

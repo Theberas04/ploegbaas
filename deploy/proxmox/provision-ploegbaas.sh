@@ -59,6 +59,45 @@ if ! "$NODE_MAP/bin/node" --version >/dev/null 2>&1; then
 fi
 log "Node: $(node --version)"
 
+# --- 1b. Pingen toestaan en een sleutel voor de agent klaarzetten --------------
+# Een unprivileged container mag geen ICMP (geen cap_net_raw) en de ping uit
+# Debian is niet setuid, dus elke ping eindigt in "Operation not permitted" —
+# dat lijkt op een netwerkstoring die er niet is. Sinds Linux 3.0 mag een gewone
+# gebruiker ICMP-datagrammen gebruiken als zijn groep in ping_group_range staat.
+# Dat zetten we hier, zodat ping gewoon werkt zonder extra rechten.
+if ! sysctl -q -w net.ipv4.ping_group_range="0 2147483647" 2>/dev/null; then
+  warn "Kon ping_group_range niet zetten; ping blijft dan onmogelijk (TCP-proeven werken wel)."
+else
+  printf 'net.ipv4.ping_group_range = 0 2147483647\n' > /etc/sysctl.d/90-ploegbaas-ping.conf
+  log "Pingen toegestaan (ping_group_range open, ook na een herstart)."
+fi
+
+# De agent moet op andere machines in het netwerk kunnen inloggen. De sleutel
+# wordt hier gemaakt; de publieke helft moet nog in ~/.ssh/authorized_keys van
+# die machines komen (dat kan alleen de beheerder daar doen).
+mkdir -p /root/.ssh && chmod 700 /root/.ssh
+if [ ! -f /root/.ssh/id_ed25519 ]; then
+  ssh-keygen -t ed25519 -N '' -C "ploegbaas-ai@$(hostname)" -f /root/.ssh/id_ed25519 -q \
+    && log "Sleutel voor de agent gemaakt in /root/.ssh/id_ed25519."
+fi
+if [ ! -f /root/.ssh/config ]; then
+  cat > /root/.ssh/config <<'SSHEOF'
+# Voor de AI-agent: nooit blijven hangen op een hostsleutelvraag, en altijd
+# dezelfde sleutel gebruiken — anders wacht een agent midden in een taak op een
+# vraag die niemand kan beantwoorden.
+Host *
+  StrictHostKeyChecking accept-new
+  UserKnownHostsFile ~/.ssh/known_hosts
+  IdentitiesOnly yes
+  IdentityFile ~/.ssh/id_ed25519
+  ConnectTimeout 5
+  ServerAliveInterval 30
+  ServerAliveCountMax 3
+SSHEOF
+  chmod 600 /root/.ssh/config
+fi
+SSH_PUB="${SSH_PUB:-$(cat /root/.ssh/id_ed25519.pub 2>/dev/null || echo '')}"
+
 # --- 2. Als service draaien ------------------------------------------------------
 # De agent die Ploegbaas aanstuurt is de Hermes Agent; die komt in /root/.local/bin
 # te staan, dus dat pad moet in de PATH van de service. Zonder dat vindt de
@@ -220,5 +259,17 @@ echo "  Dashboard:  http://${EIGEN_IP:-localhost}:$PB_POORT"
 echo "  Wachtwoord: $LOGIN_BESTAND lezen (of $PB_DATA/wachtwoord.txt)"
 echo "  Agent:      ${HERMES_PAD:-niet geïnstalleerd}"
 echo "  Meldingen:  ${MELDWEBHOOK:-nog niet ingesteld — vul het in bij Meldingen in het dashboard}"
+PING_NU="$(ping -c1 -W2 1.1.1.1 >/dev/null 2>&1 && echo 'werkt' || echo 'nog niet (of geen ICMP naar buiten)')"
+echo "  Pingen:     $PING_NU"
 echo
+if [ -n "$SSH_PUB" ]; then
+  echo "Wil je dat de AI op andere machines kan werken, zet dan deze regel in"
+  echo "~/.ssh/authorized_keys van die machine (eenmalig, per machine):"
+  echo
+  echo "  $SSH_PUB"
+  echo
+  echo "Daarna kan de agent daar inloggen, bijvoorbeeld:  ssh root@192.168.1.100 uptime"
+  echo "(De sleutel staat in deze container in /root/.ssh/id_ed25519.pub.)"
+  echo
+fi
 echo "Controleren:  bash /opt/ploegbaas-kit/check-ploegbaas.sh"

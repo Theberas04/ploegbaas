@@ -76,12 +76,31 @@ geheim. Elke melding is dan een nieuwe opdracht voor de agent.
 De kit installeert de Hermes Agent **in de container**, en die draait daar met volledige
 rechten. De agent kan dus alles wat je op die machine kunt: bestanden schrijven, diensten
 herstarten, andere machines op je netwerk benaderen met `curl`/`ssh`, en repositories
-bijwerken. Geef hem de sleutels die hij daarvoor nodig heeft:
+bijwerken.
+
+De kit maakt daarvoor **zelf een sleutel** in de container (`/root/.ssh/id_ed25519`) en zet
+een `~/.ssh/config` neer die nooit blijft hangen op een hostsleutelvraag — anders wacht een
+agent midden in een taak op een "yes/no" die niemand kan beantwoorden. De publieke helft
+moet één keer per machine in `~/.ssh/authorized_keys` staan; het inrichtscript print hem
+aan het eind:
 
 ```bash
-ssh-keygen -t ed25519 -N '' -f /root/.ssh/id_ed25519      # in de container
-cat /root/.ssh/id_ed25519.pub                              # op de andere machine in ~/.ssh/authorized_keys
+cat /root/.ssh/id_ed25519.pub        # in de container; plak die regel op de andere machine
 ```
+
+**Pingen** zet de kit ook goed. Een unprivileged container mag geen ICMP (`cap_net_raw`) en
+de `ping` van Debian is niet setuid, dus elke ping eindigt in *Operation not permitted* —
+dat lijkt op een netwerkstoring die er niet is. De kit zet daarom
+`net.ipv4.ping_group_range = 0 2147483647` (ook in `/etc/sysctl.d/90-ploegbaas-ping.conf`,
+dus na een herstart nog steeds). In een container die er al stond is dat één regel:
+
+```bash
+sysctl -w net.ipv4.ping_group_range="0 2147483647"
+echo 'net.ipv4.ping_group_range = 0 2147483647' > /etc/sysctl.d/90-ploegbaas-ping.conf
+```
+
+Zonder die regel werkt alles nog steeds — alleen bereikbaarheid toets je dan met TCP
+(`diagnose-` en `check-ploegbaas.sh` doen dat ook) in plaats van met ping.
 
 Wat je zelf in de hand houdt: de agent werkt alleen aan taken die in het dashboard staan
 (of die via een routine of een melding binnenkomen), en alles wat hij doet staat in het
