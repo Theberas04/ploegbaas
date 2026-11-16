@@ -1,0 +1,666 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#f4f7fb">
+<title>Ploegbaas</title>
+<style>
+  :root{
+    --bg:#f4f7fb; --kaart:#ffffff; --lijn:#e3eaf4; --tekst:#0f172a; --zacht:#5b6b82;
+    --accent:#2ea3f2; --diep:#1e73be; --goed:#1f9d55; --let:#d97706; --fout:#dc2626;
+    --r:14px; --schaduw:0 1px 2px rgba(15,23,42,.06),0 8px 24px rgba(15,23,42,.05);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tekst);
+    font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  a{color:var(--diep);text-decoration:none}
+  button{font:inherit}
+  .doos{display:flex;min-height:100vh}
+  /* zijbalk */
+  aside{width:238px;flex:0 0 238px;background:var(--kaart);border-right:1px solid var(--lijn);
+    padding:18px 14px;display:flex;flex-direction:column;gap:22px;position:sticky;top:0;height:100vh}
+  .merk{display:flex;align-items:center;gap:10px;padding:2px 6px}
+  .merk svg{flex:0 0 34px}
+  .merk b{font-size:18px;letter-spacing:-.2px;display:block;line-height:1.1}
+  .merk span{font-size:12px;color:var(--zacht)}
+  nav{display:flex;flex-direction:column;gap:2px}
+  nav a{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:10px;color:var(--tekst);font-weight:500}
+  nav a:hover{background:#eef4fb}
+  nav a.aan{background:linear-gradient(90deg,#e8f4fe,#f2f9ff);color:var(--diep);font-weight:600}
+  nav .kop{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--zacht);margin:14px 10px 4px}
+  .tel{background:var(--accent);color:#fff;border-radius:999px;font-size:11px;padding:1px 7px;margin-left:auto}
+  /* hoofd */
+  main{flex:1;min-width:0;padding:22px 26px 60px}
+  h1{font-size:22px;margin:0 0 4px;letter-spacing:-.3px}
+  h2{font-size:16px;margin:26px 0 12px}
+  .onder{color:var(--zacht);font-size:13px;margin:0 0 18px}
+  .kaarten{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:14px}
+  .kaart{background:var(--kaart);border:1px solid var(--lijn);border-radius:var(--r);padding:15px 16px;box-shadow:var(--schaduw)}
+  .kaart .cijfer{font-size:27px;font-weight:700;letter-spacing:-.5px}
+  .kaart .naam{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--zacht);margin-bottom:6px}
+  .kaart .bij{font-size:12px;color:var(--zacht);margin-top:4px}
+  .paneel{background:var(--kaart);border:1px solid var(--lijn);border-radius:var(--r);box-shadow:var(--schaduw);overflow:hidden}
+  .paneel-kop{padding:13px 16px;border-bottom:1px solid var(--lijn);display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .paneel-kop b{font-size:14px}
+  .paneel-kop .rechts{margin-left:auto;display:flex;gap:8px;align-items:center}
+  .twee{display:grid;grid-template-columns:1.35fr 1fr;gap:16px;align-items:start}
+  @media(max-width:950px){.twee{grid-template-columns:1fr} aside{position:static;height:auto}}
+  table{width:100%;border-collapse:collapse}
+  th,td{text-align:left;padding:10px 16px;border-bottom:1px solid var(--lijn);vertical-align:top}
+  th{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--zacht)}
+  tr:last-child td{border-bottom:none}
+  tbody tr:hover{background:#fafcff}
+  .pil{display:inline-block;border-radius:999px;padding:2px 9px;font-size:12px;font-weight:600;white-space:nowrap}
+  .nieuw{background:#e8f4fe;color:#1e73be}
+  .bezig{background:#fff4e5;color:#b45309}
+  .review{background:#ede9fe;color:#6d28d9}
+  .klaar{background:#e7f7ee;color:#15803d}
+  .geblokkeerd{background:#fdeaea;color:#b91c1c}
+  .actief{background:#e7f7ee;color:#15803d}
+  .gepauzeerd{background:#eef2f7;color:#64748b}
+  .lopend{background:#fff4e5;color:#b45309}
+  .geslaagd{background:#e7f7ee;color:#15803d}
+  .mislukt{background:#fdeaea;color:#b91c1c}
+  .gestopt{background:#eef2f7;color:#64748b}
+  .knop{background:var(--accent);color:#fff;border:0;border-radius:9px;padding:8px 13px;font-weight:600;cursor:pointer}
+  .knop:hover{background:var(--diep)}
+  .knop.los{background:#eef4fb;color:var(--diep)}
+  .knop.los:hover{background:#e0edfa}
+  .knop.rood{background:#fdeaea;color:#b91c1c}
+  .knop.klein{padding:5px 10px;font-size:13px}
+  .veld{display:flex;flex-direction:column;gap:5px;margin-bottom:12px}
+  .veld label{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--zacht)}
+  input,select,textarea{font:inherit;padding:9px 11px;border:1px solid var(--lijn);border-radius:10px;background:#fff;color:var(--tekst);width:100%}
+  textarea{min-height:110px;resize:vertical}
+  .rij{display:flex;gap:12px}.rij>*{flex:1}
+  .bericht{padding:11px 14px;border-radius:12px;background:#f7fafd;border:1px solid var(--lijn);margin-bottom:10px;white-space:pre-wrap}
+  .bericht.mens{background:#eff8ff;border-color:#cfe8fb}
+  .bericht .kop{font-size:12px;color:var(--zacht);margin-bottom:5px;display:flex;gap:8px}
+  .log{background:#0f172a;color:#e2e8f0;border-radius:12px;padding:14px;font:12.5px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;
+    max-height:440px;overflow:auto;white-space:pre-wrap}
+  .leeg{padding:34px 16px;text-align:center;color:var(--zacht)}
+  .balk{display:flex;align-items:flex-end;gap:5px;height:132px;padding:14px 16px 4px}
+  .balk .pijler{flex:1;display:flex;flex-direction:column;justify-content:flex-end;gap:2px;min-width:0}
+  .balk .stuk{background:var(--accent);border-radius:3px 3px 0 0;min-height:2px}
+  .balk .stuk.mislukt{background:#f0a3a3}
+  .balk .dag{font-size:10px;color:var(--zacht);text-align:center;margin-top:4px}
+  .inlog{min-height:100vh;display:grid;place-items:center;padding:20px}
+  .inlog .kaart{width:100%;max-width:390px;padding:26px}
+  .inlog h1{font-size:20px}
+  .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+  .zacht{color:var(--zacht);font-size:13px}
+  code{background:#eef4fb;border-radius:6px;padding:1px 6px;font-size:13px}
+  .legende{display:flex;gap:14px;font-size:12px;color:var(--zacht);padding:0 16px 12px}
+  .stip{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:5px}
+</style>
+</head>
+<body>
+<div id="app" class="doos"></div>
+
+<script>
+const S = {
+  pad: location.hash.replace(/^#/, '') || '/dashboard',
+  ingelogd: null, overzicht: null, taken: [], agenten: [], runs: [], goedkeuringen: [],
+  routines: [], activiteit: [], bedrijven: [], taak: null, runLog: null, filterStatus: '', zoek: '',
+};
+
+async function api(pad, opties = {}) {
+  const antwoord = await fetch('/api' + pad, {
+    method: opties.method || 'GET',
+    headers: { 'Content-Type': 'application/json' },
+    body: opties.lijf ? JSON.stringify(opties.lijf) : undefined,
+  });
+  if (antwoord.status === 401) { S.ingelogd = false; teken(); throw new Error('niet ingelogd'); }
+  const data = await antwoord.json().catch(() => ({}));
+  if (!antwoord.ok) throw new Error(data.fout || 'Er ging iets mis');
+  return data;
+}
+const esc = (t) => String(t ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const tijd = (iso) => iso ? new Date(iso).toLocaleString('nl-NL', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—';
+const euro = (centen) => '€ ' + (Number(centen || 0) / 100).toFixed(2).replace('.', ',');
+const pil = (soort, tekst) => `<span class="pil ${soort}">${esc(tekst || soort)}</span>`;
+const STATUS_TAK = { nieuw: 'nieuw', bezig: 'bezig', review: 'nakijken', klaar: 'klaar', geblokkeerd: 'geblokkeerd' };
+
+function ga(pad) { location.hash = '#' + pad; }
+
+function tekenMerk() {
+  return `<div class="merk">
+    <svg viewBox="0 0 40 40" width="34" height="34" aria-hidden="true">
+      <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#5ff0e8"/><stop offset=".5" stop-color="#2ea3f2"/><stop offset="1" stop-color="#1e73be"/>
+      </linearGradient></defs>
+      <rect x="2" y="2" width="36" height="36" rx="11" fill="url(#g)"/>
+      <path d="M12 27V13h5.4c3.2 0 5.1 1.6 5.1 4.2 0 2.1-1.2 3.5-3.2 4l4.4 5.8h-4.3l-3.8-5.3H16V27z" fill="#fff"/>
+      <circle cx="28.5" cy="15" r="2.4" fill="#fff" opacity=".85"/>
+    </svg>
+    <div><b>Ploegbaas</b><span>jouw ploeg AI-agenten</span></div>
+  </div>`;
+}
+
+function tekenZijbalk() {
+  const open = S.overzicht?.kpi?.taken_nakijken ?? 0;
+  const link = (pad, naam) => `<a href="#${pad}" class="${S.pad.startsWith(pad) ? 'aan' : ''}">${naam}${
+    pad === '/goedkeuringen' && open ? `<span class="tel">${open}</span>` : ''}</a>`;
+  return `<aside>
+    ${tekenMerk()}
+    <nav>
+      ${link('/dashboard', 'Dashboard')}
+      <div class="kop">Werk</div>
+      ${link('/taken', 'Taken')}
+      ${link('/goedkeuringen', 'Nakijken')}
+      ${link('/routines', 'Routines')}
+      <div class="kop">Ploeg</div>
+      ${link('/agenten', 'Agenten')}
+      ${link('/runs', 'Runs')}
+      ${link('/activiteit', 'Logboek')}
+    </nav>
+    <div style="margin-top:auto">
+      <button class="knop los klein" onclick="uitloggen()" style="width:100%">Uitloggen</button>
+    </div>
+  </aside>`;
+}
+
+async function uitloggen() { await api('/uitloggen', { method: 'POST' }); S.ingelogd = false; teken(); }
+
+function grafiek(perDag) {
+  const hoogte = 100;
+  const max = Math.max(1, ...perDag.map((d) => d.gelukt + d.mislukt + d.lopend));
+  return `<div class="balk">${perDag.map((d) => {
+    const totaal = d.gelukt + d.mislukt + d.lopend;
+    const h = Math.round((d.gelukt / max) * hoogte);
+    const hm = Math.round((d.mislukt / max) * hoogte);
+    const hl = Math.round((d.lopend / max) * hoogte);
+    return `<div class="pijler" title="${d.dag}: ${totaal} run(s)">
+      <div class="stuk mislukt" style="height:${hl}px;background:#fbd6a7"></div>
+      <div class="stuk mislukt" style="height:${hm}px"></div>
+      <div class="stuk" style="height:${h}px"></div>
+      <div class="dag">${d.dag.slice(8)}</div>
+    </div>`;
+  }).join('')}</div>
+  <div class="legende"><span><i class="stip" style="background:#2ea3f2"></i>geslaagd</span>
+    <span><i class="stip" style="background:#f0a3a3"></i>mislukt</span>
+    <span><i class="stip" style="background:#fbd6a7"></i>loopt</span></div>`;
+}
+
+function tekenDashboard() {
+  const o = S.overzicht; if (!o) return '<main><div class="leeg">Laden…</div></main>';
+  const k = o.kpi;
+  return `<main>
+    <h1>Dashboard</h1>
+    <p class="onder">Wat je ploeg nu doet — ${new Date().toLocaleDateString('nl-NL', { weekday: 'long', day: 'numeric', month: 'long' })}</p>
+    <div class="kaarten">
+      <div class="kaart"><div class="naam">Agenten actief</div><div class="cijfer">${k.agenten_actief}<span class="zacht" style="font-size:15px">/${k.agenten_totaal}</span></div>
+        <div class="bij">${k.runs_lopend} run(s) lopen nu</div></div>
+      <div class="kaart"><div class="naam">Taken open</div><div class="cijfer">${k.taken_open}</div>
+        <div class="bij">${k.taken_geblokkeerd} geblokkeerd</div></div>
+      <div class="kaart"><div class="naam">Wacht op nakijken</div><div class="cijfer">${k.taken_nakijken}</div>
+        <div class="bij"><a href="#/goedkeuringen">keuren</a></div></div>
+      <div class="kaart"><div class="naam">Runs vandaag</div><div class="cijfer">${k.runs_vandaag}</div>
+        <div class="bij">kosten deze maand ${euro(k.kosten_maand_centen)}</div></div>
+    </div>
+
+    <div class="twee" style="margin-top:18px">
+      <div class="paneel"><div class="paneel-kop"><b>Runs, laatste 14 dagen</b></div>${grafiek(o.per_dag)}</div>
+      <div class="paneel"><div class="paneel-kop"><b>Ploeg</b><span class="rechts"><a class="knop los klein" href="#/agenten">Beheren</a></span></div>
+        <table><tbody>${o.agenten.map((a) => `<tr>
+          <td><b>${esc(a.naam)}</b><div class="zacht">${esc(a.titel || a.rol)}</div></td>
+          <td style="width:1%">${pil(a.status)}</td>
+          <td style="width:1%"><button class="knop los klein" onclick="wek(${a.id})">wek</button></td></tr>`).join('')
+          || '<tr><td class="leeg">Nog geen agenten</td></tr>'}</tbody></table>
+      </div>
+    </div>
+
+    <h2>Recente taken</h2>
+    <div class="paneel"><table>
+      <thead><tr><th>Taak</th><th>Agent</th><th>Status</th><th>Bijgewerkt</th></tr></thead>
+      <tbody>${o.recente_taken.map((t) => `<tr onclick="ga('/taken/${t.id}')" style="cursor:pointer">
+        <td><b>${esc(t.titel)}</b><div class="zacht">#${t.id} · ${esc(t.labels || '')}</div></td>
+        <td>${esc(t.agent_naam || '—')}</td><td>${pil(t.status, STATUS_TAK[t.status])}</td><td class="zacht">${tijd(t.bijgewerkt)}</td>
+      </tr>`).join('') || '<tr><td class="leeg">Nog geen taken</td></tr>'}</tbody></table></div>
+
+    <h2>Logboek</h2>
+    <div class="paneel"><table><tbody>${o.activiteit.map((a) => `<tr>
+      <td class="zacht" style="width:1%">${tijd(a.tijd)}</td><td>${esc(a.tekst)}</td></tr>`).join('')}</tbody></table></div>
+  </main>`;
+}
+
+function tekenTaken() {
+  let rijen = S.taken;
+  if (S.filterStatus) rijen = rijen.filter((t) => t.status === S.filterStatus);
+  if (S.zoek) rijen = rijen.filter((t) => (t.titel + t.omschrijving).toLowerCase().includes(S.zoek.toLowerCase()));
+  const statussen = ['', 'nieuw', 'bezig', 'review', 'klaar', 'geblokkeerd'];
+  return `<main>
+    <h1>Taken</h1>
+    <p class="onder">Alles wat de ploeg doet, met per taak wie eraan werkt en wat eruit kwam.</p>
+    <div class="toolbar">
+      <button class="knop" onclick="nieuweTaak()">Nieuwe taak</button>
+      ${statussen.map((s) => `<button class="knop ${S.filterStatus === s ? '' : 'los'} klein" onclick="S.filterStatus='${s}';teken()">${
+        s ? STATUS_TAK[s] : 'alles'}</button>`).join('')}
+      <input style="max-width:230px;margin-left:auto" placeholder="Zoeken…" value="${esc(S.zoek)}"
+        oninput="S.zoek=this.value;tekenLijst()" id="zoekveld">
+    </div>
+    <div class="paneel" id="takenlijst">${tekenTakenLijst(rijen)}</div>
+    <div id="formulier"></div>
+  </main>`;
+}
+
+function tekenTakenLijst(rijen) {
+  return `<table><thead><tr><th>Taak</th><th>Agent</th><th>Prioriteit</th><th>Status</th><th>Bijgewerkt</th></tr></thead>
+    <tbody>${rijen.map((t) => `<tr onclick="ga('/taken/${t.id}')" style="cursor:pointer">
+      <td><b>${esc(t.titel)}</b><div class="zacht">#${t.id}${t.labels ? ' · ' + esc(t.labels) : ''}${
+        t.aantal_berichten ? ' · ' + t.aantal_berichten + ' bericht(en)' : ''}</div></td>
+      <td>${esc(t.agent_naam || '—')}</td><td class="zacht">${esc(t.prioriteit)}</td>
+      <td>${pil(t.status, STATUS_TAK[t.status])}</td><td class="zacht">${tijd(t.bijgewerkt)}</td></tr>`).join('')
+      || '<tr><td colspan="5" class="leeg">Geen taken met deze filter.</td></tr>'}</tbody></table>`;
+}
+function tekenLijst() {
+  let rijen = S.taken;
+  if (S.filterStatus) rijen = rijen.filter((t) => t.status === S.filterStatus);
+  if (S.zoek) rijen = rijen.filter((t) => (t.titel + t.omschrijving).toLowerCase().includes(S.zoek.toLowerCase()));
+  const vak = document.getElementById('takenlijst');
+  if (vak) vak.innerHTML = tekenTakenLijst(rijen);
+}
+
+function nieuweTaak() {
+  document.getElementById('formulier').innerHTML = `<div class="paneel" style="margin-top:16px;padding:16px">
+    <h2 style="margin-top:0">Nieuwe taak</h2>
+    <div class="veld"><label>Titel</label><input id="t-titel" placeholder="Wat moet er gebeuren?"></div>
+    <div class="veld"><label>Omschrijving</label><textarea id="t-oms" placeholder="Context, eisen, waar het resultaat heen moet…"></textarea></div>
+    <div class="rij">
+      <div class="veld"><label>Agent</label><select id="t-agent"><option value="">— niet toegewezen —</option>
+        ${S.agenten.map((a) => `<option value="${a.id}">${esc(a.naam)}</option>`).join('')}</select></div>
+      <div class="veld"><label>Prioriteit</label><select id="t-prio"><option value="normaal">normaal</option>
+        <option value="hoog">hoog</option><option value="laag">laag</option></select></div>
+      <div class="veld"><label>Labels</label><input id="t-labels" placeholder="bijv. website"></div>
+    </div>
+    <button class="knop" onclick="bewaarTaak()">Aanmaken</button>
+    <button class="knop los" onclick="document.getElementById('formulier').innerHTML=''">Annuleren</button>
+  </div>`;
+  document.getElementById('t-titel').focus();
+}
+
+async function bewaarTaak() {
+  const titel = document.getElementById('t-titel').value.trim();
+  if (!titel) return alert('Geef een titel.');
+  const taak = await api('/taken', { method: 'POST', lijf: {
+    titel, omschrijving: document.getElementById('t-oms').value,
+    agent_id: document.getElementById('t-agent').value || null,
+    prioriteit: document.getElementById('t-prio').value,
+    labels: document.getElementById('t-labels').value,
+  } });
+  ga('/taken/' + taak.id);
+}
+
+function tekenTaak() {
+  const t = S.taak; if (!t) return '<main><div class="leeg">Laden…</div></main>';
+  const open = (t.goedkeuringen || []).find((g) => g.status === 'open');
+  return `<main>
+    <p class="onder"><a href="#/taken">← alle taken</a></p>
+    <h1>#${t.id} ${esc(t.titel)}</h1>
+    <p class="onder">${pil(t.status, STATUS_TAK[t.status])} · prioriteit ${esc(t.prioriteit)} ·
+      ${esc(t.agent_naam || 'niet toegewezen')} · bijgewerkt ${tijd(t.bijgewerkt)}</p>
+
+    <div class="twee">
+      <div>
+        <div class="paneel" style="padding:16px">
+          <div class="veld"><label>Omschrijving</label>
+            <textarea id="d-oms">${esc(t.omschrijving)}</textarea></div>
+          <div class="rij">
+            <div class="veld"><label>Agent</label><select id="d-agent">
+              <option value="">— niet toegewezen —</option>
+              ${S.agenten.map((a) => `<option value="${a.id}" ${a.id === t.agent_id ? 'selected' : ''}>${esc(a.naam)}</option>`).join('')}
+            </select></div>
+            <div class="veld"><label>Status</label><select id="d-status">
+              ${Object.entries(STATUS_TAK).map(([w, n]) => `<option value="${w}" ${w === t.status ? 'selected' : ''}>${n}</option>`).join('')}
+            </select></div>
+            <div class="veld"><label>Prioriteit</label><select id="d-prio">
+              ${['laag', 'normaal', 'hoog'].map((p) => `<option value="${p}" ${p === t.prioriteit ? 'selected' : ''}>${p}</option>`).join('')}
+            </select></div>
+          </div>
+          <button class="knop" onclick="bewaarTaakVelden(${t.id})">Opslaan</button>
+          ${t.agent_id && t.status === 'nieuw' ? `<button class="knop los" onclick="wek(${t.agent_id})">Nu laten beginnen</button>` : ''}
+          ${t.status === 'geblokkeerd' ? `<button class="knop los" onclick="herenig(${t.id})">Opnieuw aanbieden</button>` : ''}
+        </div>
+
+        <h2>Overleg</h2>
+        ${(t.berichten || []).map((b) => `<div class="bericht ${b.van_soort === 'mens' ? 'mens' : ''}">
+          <div class="kop"><b>${esc(b.van_naam || b.van_soort)}</b> ${tijd(b.tijd)}</div>${esc(b.tekst)}</div>`).join('')
+          || '<div class="paneel leeg">Nog geen berichten.</div>'}
+        <div class="paneel" style="padding:14px;margin-top:10px">
+          <div class="veld"><label>Iets terugzeggen of de agent bijsturen</label>
+            <textarea id="b-tekst" placeholder="Bijvoorbeeld: los eerst de fout in stap 2 op."></textarea></div>
+          <button class="knop" onclick="stuurBericht(${t.id})">Versturen</button>
+          <span class="zacht">Een bericht zet de taak weer op “nieuw”, zodat de agent verdergaat.</span>
+        </div>
+      </div>
+
+      <div>
+        ${open ? `<div class="paneel" style="padding:16px;border-color:#ddd6fe">
+          <b>Wacht op jouw oordeel</b>
+          <p class="zacht">De agent meldt deze taak klaar. Keur goed, of stuur hem terug met uitleg.</p>
+          <div class="veld"><label>Opmerking (optioneel)</label><input id="g-op"></div>
+          <button class="knop" onclick="keur(${t.id}, true)">Goedkeuren</button>
+          <button class="knop rood" onclick="keur(${t.id}, false)">Terug naar agent</button>
+        </div>` : ''}
+
+        <div class="paneel" style="margin-top:16px">
+          <div class="paneel-kop"><b>Runs van deze taak</b></div>
+          <table><tbody>${(t.runs || []).map((r) => `<tr onclick="bekijkRun(${r.id})" style="cursor:pointer">
+            <td>#${r.id}</td><td>${pil(r.status)}</td><td class="zacht">${tijd(r.gestart)}</td>
+            <td class="zacht">${r.kosten_centen ? euro(r.kosten_centen) : '—'}</td></tr>`).join('')
+            || '<tr><td class="leeg">Nog geen run</td></tr>'}</tbody></table>
+        </div>
+
+        <div class="paneel" style="margin-top:16px;padding:14px">
+          <b class="zacht">Geschiedenis</b>
+          <table><tbody>${(t.goedkeuringen || []).map((g) => `<tr><td>${pil(g.status === 'open' ? 'review' : g.status === 'goedgekeurd' ? 'klaar' : 'geblokkeerd', g.status)}</td>
+            <td class="zacht">${tijd(g.gevraagd)}${g.besluit_door ? ' · ' + esc(g.besluit_door) : ''}</td></tr>`).join('')}</tbody></table>
+        </div>
+      </div>
+    </div>
+  </main>`;
+}
+
+async function bewaarTaakVelden(id) {
+  await api('/taken/' + id, { method: 'PATCH', lijf: {
+    omschrijving: document.getElementById('d-oms').value,
+    agent_id: document.getElementById('d-agent').value || null,
+    status: document.getElementById('d-status').value,
+    prioriteit: document.getElementById('d-prio').value,
+  } });
+  laadTaak(id);
+}
+async function stuurBericht(id) {
+  const tekst = document.getElementById('b-tekst').value.trim();
+  if (!tekst) return;
+  await api(`/taken/${id}/bericht`, { method: 'POST', lijf: { tekst } });
+  laadTaak(id);
+}
+async function keur(id, goed) {
+  await api(`/taken/${id}/${goed ? 'keur-goed' : 'keur-af'}`, { method: 'POST', lijf: { opmerking: document.getElementById('g-op')?.value || '' } });
+  laadTaak(id);
+}
+async function herenig(id) {
+  await api(`/taken/${id}`, { method: 'PATCH', lijf: { status: 'nieuw' } });
+  laadTaak(id);
+}
+
+function tekenAgenten() {
+  return `<main>
+    <h1>Agenten</h1>
+    <p class="onder">Elke agent heeft een rol, een adapter (hoe hij werkt) en eventueel een budget.</p>
+    <div class="toolbar"><button class="knop" onclick="nieuweAgent()">Agent aannemen</button></div>
+    <div class="paneel"><table>
+      <thead><tr><th>Agent</th><th>Adapter</th><th>Model</th><th>Hartslag</th><th>Status</th><th>Laatste run</th><th></th></tr></thead>
+      <tbody>${S.agenten.map((a) => `<tr>
+        <td><b>${esc(a.naam)}</b><div class="zacht">${esc(a.titel || a.rol)}</div></td>
+        <td>${esc(a.adapter)}<div class="zacht">${esc(JSON.parse(a.adapter_config || '{}').commando || '')}</div></td>
+        <td>${esc(a.model || 'eigen keuze')}</td>
+        <td class="zacht">${a.heartbeat_aan ? 'elke ' + a.heartbeat_minuten + ' min' : 'uit'}</td>
+        <td>${pil(a.status)}</td><td class="zacht">${tijd(a.laatste_run)}</td>
+        <td style="white-space:nowrap">
+          ${a.status === 'actief'
+            ? `<button class="knop los klein" onclick="agentActie(${a.id},'pauzeer')">pauzeer</button>`
+            : `<button class="knop los klein" onclick="agentActie(${a.id},'hervat')">hervat</button>`}
+          <button class="knop los klein" onclick="wek(${a.id})">wek</button>
+          <button class="knop los klein" onclick="bewerkAgent(${a.id})">bewerk</button>
+        </td></tr>`).join('')}</tbody></table></div>
+    <div id="agentformulier"></div>
+    <h2>Wat de adapters doen</h2>
+    <div class="paneel" style="padding:16px">
+      <p><b>hermes</b> — start de Hermes Agent op deze machine met de taak als opdracht. Dit is de adapter die je hier het meest gebruikt.</p>
+      <p><b>opdracht</b> — draait een eigen shell-commando. De taak staat in de omgeving als <code>PLOEGBAAS_TAAK_OMSCHRIJVING</code>.</p>
+      <p><b>http</b> — stuurt de taak als JSON naar een eigen endpoint en leest het antwoord als uitkomst.</p>
+    </div>
+  </main>`;
+}
+
+function agentVelden(a = {}) {
+  const c = a.adapter_config ? JSON.parse(a.adapter_config) : {};
+  return `
+    <div class="rij">
+      <div class="veld"><label>Naam</label><input id="a-naam" value="${esc(a.naam || '')}"></div>
+      <div class="veld"><label>Rol</label><input id="a-rol" value="${esc(a.rol || 'algemeen')}"></div>
+    </div>
+    <div class="veld"><label>Titel</label><input id="a-titel" value="${esc(a.titel || '')}" placeholder="bijv. Website-beheerder"></div>
+    <div class="rij">
+      <div class="veld"><label>Adapter</label><select id="a-adapter">
+        ${['hermes', 'opdracht', 'http'].map((s) => `<option value="${s}" ${a.adapter === s ? 'selected' : ''}>${s}</option>`).join('')}
+      </select></div>
+      <div class="veld"><label>Model (optioneel)</label><input id="a-model" value="${esc(a.model || '')}" placeholder="laat leeg voor eigen keuze"></div>
+    </div>
+    <div class="rij">
+      <div class="veld"><label>Commando</label><input id="a-commando" value="${esc(c.commando || 'hermes')}"></div>
+      <div class="veld"><label>Of endpoint (http)</label><input id="a-url" value="${esc(c.url || '')}" placeholder="http://127.0.0.1:8080/taak"></div>
+    </div>
+    <div class="rij">
+      <div class="veld"><label>Hartslag</label><select id="a-hartslag">
+        <option value="0" ${!a.heartbeat_aan ? 'selected' : ''}>uit</option>
+        <option value="1" ${a.heartbeat_aan ? 'selected' : ''}>aan</option></select></div>
+      <div class="veld"><label>Elke (minuten)</label><input id="a-minuten" type="number" value="${a.heartbeat_minuten || 30}"></div>
+      <div class="veld"><label>Budget per maand (euro)</label><input id="a-budget" type="number" value="${((a.budget_maand_centen || 0) / 100).toFixed(0)}"></div>
+    </div>`;
+}
+
+function nieuweAgent() {
+  document.getElementById('agentformulier').innerHTML = `<div class="paneel" style="margin-top:16px;padding:16px">
+    <h2 style="margin-top:0">Agent aannemen</h2>${agentVelden()}
+    <button class="knop" onclick="bewaarAgent()">Aannemen</button>
+    <button class="knop los" onclick="document.getElementById('agentformulier').innerHTML=''">Annuleren</button></div>`;
+}
+function bewerkAgent(id) {
+  const a = S.agenten.find((x) => x.id === id);
+  document.getElementById('agentformulier').innerHTML = `<div class="paneel" style="margin-top:16px;padding:16px">
+    <h2 style="margin-top:0">${esc(a.naam)} aanpassen</h2>${agentVelden(a)}
+    <button class="knop" onclick="bewaarAgent(${id})">Opslaan</button>
+    <button class="knop los" onclick="document.getElementById('agentformulier').innerHTML=''">Annuleren</button></div>`;
+  document.getElementById('agentformulier').scrollIntoView({ behavior: 'smooth' });
+}
+async function bewaarAgent(id) {
+  const c = { commando: document.getElementById('a-commando').value.trim(), args: ['chat', '-q'] };
+  const url = document.getElementById('a-url').value.trim();
+  if (url) c.url = url;
+  const lijf = {
+    naam: document.getElementById('a-naam').value.trim(),
+    rol: document.getElementById('a-rol').value.trim(),
+    titel: document.getElementById('a-titel').value.trim(),
+    adapter: document.getElementById('a-adapter').value,
+    model: document.getElementById('a-model').value.trim(),
+    heartbeat_aan: document.getElementById('a-hartslag').value === '1',
+    heartbeat_minuten: Number(document.getElementById('a-minuten').value || 30),
+    budget_maand_centen: Math.round(Number(document.getElementById('a-budget').value || 0) * 100),
+    adapter_config: c,
+  };
+  if (!lijf.naam) return alert('Geef een naam.');
+  if (id) await api('/agenten/' + id, { method: 'PATCH', lijf });
+  else await api('/agenten', { method: 'POST', lijf });
+  document.getElementById('agentformulier').innerHTML = '';
+  laadAlles();
+}
+async function agentActie(id, wat) {
+  await api(`/agenten/${id}/${wat}`, { method: 'POST' });
+  laadAlles();
+}
+async function wek(id) {
+  try { await api(`/agenten/${id}/wek`, { method: 'POST' }); }
+  catch (e) { alert(e.message); }
+  laadAlles();
+}
+
+function tekenGoedkeuringen() {
+  return `<main>
+    <h1>Nakijken</h1>
+    <p class="onder">Werk waar een agent “klaar” van zegt. Jij beslist of het af is.</p>
+    <div class="paneel"><table>
+      <thead><tr><th>Taak</th><th>Agent</th><th>Gevraagd</th><th></th></tr></thead>
+      <tbody>${S.goedkeuringen.map((g) => `<tr>
+        <td><a href="#/taken/${g.taak_id}"><b>#${g.taak_id} ${esc(g.taak_titel || '')}</b></a></td>
+        <td>${esc(g.agent_naam || '—')}</td><td class="zacht">${tijd(g.gevraagd)}</td>
+        <td style="white-space:nowrap">
+          <button class="knop klein" onclick="keur(${g.taak_id}, true)">goedkeuren</button>
+          <button class="knop rood klein" onclick="keur(${g.taak_id}, false)">terug</button></td>
+      </tr>`).join('') || '<tr><td colspan="4" class="leeg">Niets te nakijken. Alles is af.</td></tr>'}</tbody></table></div>
+  </main>`;
+}
+
+function tekenRuns() {
+  return `<main>
+    <h1>Runs</h1>
+    <p class="onder">Elke keer dat een agent aan een taak werkte, met de volledige log.</p>
+    <div class="paneel"><table>
+      <thead><tr><th>Run</th><th>Agent</th><th>Taak</th><th>Status</th><th>Gestart</th><th>Kosten</th><th></th></tr></thead>
+      <tbody>${S.runs.map((r) => `<tr>
+        <td><b>#${r.id}</b></td><td>${esc(r.agent_naam || '—')}</td>
+        <td class="zacht">${r.taak_id ? `<a href="#/taken/${r.taak_id}">#${r.taak_id} ${esc(r.taak_titel || '')}</a>` : '—'}</td>
+        <td>${pil(r.status)}</td><td class="zacht">${tijd(r.gestart)}</td><td class="zacht">${euro(r.kosten_centen)}</td>
+        <td style="white-space:nowrap">
+          <button class="knop los klein" onclick="bekijkRun(${r.id})">log</button>
+          ${r.status === 'lopend' ? `<button class="knop rood klein" onclick="stopRun(${r.id})">stop</button>` : ''}
+        </td></tr>`).join('') || '<tr><td colspan="7" class="leeg">Nog geen runs.</td></tr>'}</tbody></table></div>
+    ${S.runLog ? `<h2>Log van run #${S.runLog.id}</h2><div class="log" id="runlog">${esc(S.runLog.tekst || '')}</div>` : ''}
+  </main>`;
+}
+async function bekijkRun(id) {
+  S.runLog = await api(`/runs/${id}/log`);
+  if (!S.pad.startsWith('/runs')) ga('/runs'); else teken();
+}
+async function stopRun(id) { await api(`/runs/${id}/stop`, { method: 'POST' }); laadAlles(); }
+
+function tekenRoutines() {
+  return `<main>
+    <h1>Routines</h1>
+    <p class="onder">Terugkerend werk: Ploegbaas maakt zelf een taak aan en zet de agent aan het werk.</p>
+    <div class="toolbar"><button class="knop" onclick="nieuweRoutine()">Routine toevoegen</button></div>
+    <div class="paneel"><table>
+      <thead><tr><th>Naam</th><th>Agent</th><th>Elke</th><th>Laatst</th><th>Actief</th><th>Taaktitel</th><th></th></tr></thead>
+      <tbody>${S.routines.map((r) => `<tr>
+        <td><b>${esc(r.naam)}</b></td><td>${esc(r.agent_naam || '—')}</td>
+        <td class="zacht">${r.interval_minuten >= 1440 ? Math.round(r.interval_minuten / 1440) + ' dag(en)' : r.interval_minuten + ' min'}</td>
+        <td class="zacht">${r.laatste_start ? tijd(r.laatste_start) : 'nog niet'}</td>
+        <td>${pil(r.actief ? 'klaar' : 'gepauzeerd', r.actief ? 'aan' : 'uit')}</td>
+        <td class="zacht">${esc(r.taak_titel)}</td>
+        <td style="white-space:nowrap">
+          <button class="knop los klein" onclick="routineStart(${r.id})">nu</button>
+          <button class="knop los klein" onclick="routineZet(${r.id}, ${r.actief ? 0 : 1})">${r.actief ? 'uit' : 'aan'}</button>
+        </td></tr>`).join('') || '<tr><td colspan="7" class="leeg">Nog geen routines.</td></tr>'}</tbody></table></div>
+    <div id="routineformulier"></div>
+  </main>`;
+}
+function nieuweRoutine() {
+  document.getElementById('routineformulier').innerHTML = `<div class="paneel" style="margin-top:16px;padding:16px">
+    <h2 style="margin-top:0">Nieuwe routine</h2>
+    <div class="rij">
+      <div class="veld"><label>Naam</label><input id="r-naam" placeholder="Dagelijkse controle"></div>
+      <div class="veld"><label>Agent</label><select id="r-agent"><option value="">—</option>
+        ${S.agenten.map((a) => `<option value="${a.id}">${esc(a.naam)}</option>`).join('')}</select></div>
+      <div class="veld"><label>Elke (minuten)</label><input id="r-interval" type="number" value="1440"></div>
+    </div>
+    <div class="veld"><label>Taaktitel</label><input id="r-titel" placeholder="Dagelijkse controle van de apps"></div>
+    <div class="veld"><label>Opdracht</label><textarea id="r-oms" placeholder="Wat moet er elke keer gebeuren?"></textarea></div>
+    <button class="knop" onclick="bewaarRoutine()">Opslaan</button>
+    <button class="knop los" onclick="document.getElementById('routineformulier').innerHTML=''">Annuleren</button></div>`;
+}
+async function bewaarRoutine() {
+  await api('/routines', { method: 'POST', lijf: {
+    naam: document.getElementById('r-naam').value.trim(),
+    agent_id: document.getElementById('r-agent').value || null,
+    interval_minuten: Number(document.getElementById('r-interval').value || 1440),
+    taak_titel: document.getElementById('r-titel').value.trim(),
+    taak_omschrijving: document.getElementById('r-oms').value,
+  } });
+  document.getElementById('routineformulier').innerHTML = '';
+  laadAlles();
+}
+async function routineStart(id) { await api(`/routines/${id}/start`, { method: 'POST' }); setTimeout(laadAlles, 1500); }
+async function routineZet(id, actief) { await api('/routines/' + id, { method: 'PATCH', lijf: { actief: Boolean(actief) } }); laadAlles(); }
+
+function tekenActiviteit() {
+  return `<main>
+    <h1>Logboek</h1>
+    <p class="onder">Alles wat Ploegbaas deed: wie wat startte, wat er misging en wie wat goedkeurde.</p>
+    <div class="paneel"><table><tbody>${S.activiteit.map((a) => `<tr>
+      <td class="zacht" style="width:1%">${tijd(a.tijd)}</td><td style="width:1%">${pil('nieuw', a.soort)}</td>
+      <td>${esc(a.tekst)}</td></tr>`).join('') || '<tr><td class="leeg">Nog niets gebeurd.</td></tr>'}</tbody></table></div>
+  </main>`;
+}
+
+function tekenInlog() {
+  return `<div class="inlog"><div class="kaart">
+    ${tekenMerk()}
+    <h1 style="margin-top:16px">Inloggen</h1>
+    <p class="zacht">Het wachtwoord staat in <code>data/wachtwoord.txt</code> op de machine waar Ploegbaas draait.</p>
+    <div class="veld"><label>Wachtwoord</label><input id="w" type="password" onkeydown="if(event.key==='Enter')inloggen()"></div>
+    <button class="knop" onclick="inloggen()" style="width:100%">Naar binnen</button>
+    <p id="inlogfout" class="zacht" style="color:#b91c1c"></p>
+  </div></div>`;
+}
+async function inloggen() {
+  const w = document.getElementById('w').value;
+  const antwoord = await fetch('/api/inloggen', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ wachtwoord: w }) });
+  if (!antwoord.ok) { document.getElementById('inlogfout').textContent = 'Dat wachtwoord klopt niet.'; return; }
+  S.ingelogd = true; await laadAlles();
+}
+
+function teken() {
+  const app = document.getElementById('app');
+  if (S.ingelogd === false) { app.className = ''; app.innerHTML = tekenInlog(); return; }
+  if (S.ingelogd === null) { app.className = ''; app.innerHTML = '<div class="inlog"><div class="zacht">Laden…</div></div>'; return; }
+  app.className = 'doos';
+  let inhoud;
+  if (S.pad.startsWith('/taken/')) inhoud = tekenTaak();
+  else if (S.pad.startsWith('/taken')) inhoud = tekenTaken();
+  else if (S.pad.startsWith('/agenten')) inhoud = tekenAgenten();
+  else if (S.pad.startsWith('/goedkeuringen')) inhoud = tekenGoedkeuringen();
+  else if (S.pad.startsWith('/runs')) inhoud = tekenRuns();
+  else if (S.pad.startsWith('/routines')) inhoud = tekenRoutines();
+  else if (S.pad.startsWith('/activiteit')) inhoud = tekenActiviteit();
+  else inhoud = tekenDashboard();
+  app.innerHTML = tekenZijbalk() + inhoud;
+}
+
+async function laadAlles() {
+  try {
+    const [overzicht, taken, agenten, runs, goedkeuringen, routines, activiteit] = await Promise.all([
+      api('/overzicht'), api('/taken'), api('/agenten'), api('/runs?limiet=60'),
+      api('/goedkeuringen'), api('/routines'), api('/activiteit'),
+    ]);
+    Object.assign(S, { overzicht, taken, agenten, runs, goedkeuringen, routines, activiteit });
+    S.ingelogd = true;
+    if (S.pad.startsWith('/taken/')) await laadTaak(Number(S.pad.split('/')[2]), false);
+    teken();
+  } catch (e) { if (S.ingelogd !== false) console.error(e); }
+}
+
+async function laadTaak(id, herteken = true) {
+  S.taak = await api('/taken/' + id);
+  if (herteken) teken();
+}
+
+window.addEventListener('hashchange', () => {
+  S.pad = location.hash.replace(/^#/, '') || '/dashboard';
+  if (S.pad.startsWith('/taken/')) laadTaak(Number(S.pad.split('/')[2])); else teken();
+});
+
+// live bijwerken: ploegbaas stuurt gebeurtenissen over /api/stromen
+try {
+  const stroom = new EventSource('/api/stromen');
+  let wacht = null;
+  stroom.onmessage = (bericht) => {
+    const data = JSON.parse(bericht.data);
+    if (data.soort === 'hallo') return;
+    if (data.soort === 'log' && S.runLog && S.runLog.id === data.runId) {
+      S.runLog.tekst += data.stuk;
+      const vak = document.getElementById('runlog');
+      if (vak) { vak.textContent = S.runLog.tekst; vak.scrollTop = vak.scrollHeight; }
+      return;
+    }
+    clearTimeout(wacht);
+    wacht = setTimeout(laadAlles, 900);
+  };
+} catch (e) { /* zonder live kanaal blijft alles werken */ }
+
+(async () => { await laadAlles(); })();
+</script>
+</body>
+</html>
