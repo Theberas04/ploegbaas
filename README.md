@@ -31,10 +31,88 @@ Daarnaast: **routines** (terugkerend werk dat zelf taken aanmaakt), **budgetten*
 (een agent wordt automatisch gepauzeerd als zijn maandbudget op is), en een **live
 kanaal** zodat de pagina zichzelf bijwerkt terwijl een agent bezig is.
 
+## Meldingen: de agent weet het meteen
+
+Er zijn twee kanten aan "meteen":
+
+1. **Meteen beginnen.** Een nieuwe taak (of een goedkeuring die teruggaat naar de agent,
+   of een bericht in de thread) wordt niet pas bij de volgende hartslag opgepakt, maar
+   direct daarna — gemeten: **0,5 seconde** in plaats van maximaal 15.
+2. **Meteen doorgeven.** Elke gebeurtenis gaat als JSON naar een **meldkanaal** dat je
+   zelf instelt op de pagina *Meldingen*. Zo weet een agent — of welk systeem dan ook —
+   dat er werk is, ook als er niemand naar het dashboard kijkt.
+
+![De pagina Meldingen: meldkanaal en wat er verstuurd is](docs/screenshots/meldingen.png)
+
+Het bericht ziet er zo uit:
+
+```json
+{
+  "soort": "taak-nieuw",
+  "tekst": "Nieuwe taak 7: controleer de website",
+  "tijd": "2026-11-16T12:00:00.000Z",
+  "dashboard": "http://192.168.1.100:8123",
+  "taak": { "id": 7, "titel": "controleer de website", "status": "nieuw", "prioriteit": "hoog" },
+  "agent": { "id": 1, "naam": "Hermes", "rol": "algemeen" }
+}
+```
+
+Soorten: `taak-nieuw`, `run-bezig`, `nakijken`, `geblokkeerd`, `goedgekeurd`, `afgekeurd`,
+`routine`, `budget` en `proef`. Vul je een **geheim** in, dan gaat er een
+`X-Hub-Signature-256`-kop mee (HMAC-SHA256 over precies de verzonden tekst, zoals GitHub
+die stuurt) — daardoor accepteert een Hermes-webhookroute de melding zonder extra werk:
+
+```bash
+hermes webhook subscribe ploegbaas \
+  --prompt "Ploegbaas meldt: {tekst} (soort {soort}, dashboard {dashboard})" \
+  --deliver slack
+```
+
+Het adres dat je daarbij terugkrijgt vul je in bij *Meldingen* → Adres, met hetzelfde
+geheim. Elke melding is dan een nieuwe opdracht voor de agent.
+
+## De agent in het netwerk
+
+De kit installeert de Hermes Agent **in de container**, en die draait daar met volledige
+rechten. De agent kan dus alles wat je op die machine kunt: bestanden schrijven, diensten
+herstarten, andere machines op je netwerk benaderen met `curl`/`ssh`, en repositories
+bijwerken. Geef hem de sleutels die hij daarvoor nodig heeft:
+
+```bash
+ssh-keygen -t ed25519 -N '' -f /root/.ssh/id_ed25519      # in de container
+cat /root/.ssh/id_ed25519.pub                              # op de andere machine in ~/.ssh/authorized_keys
+```
+
+Wat je zelf in de hand houdt: de agent werkt alleen aan taken die in het dashboard staan
+(of die via een routine of een melding binnenkomen), en alles wat hij doet staat in het
+logboek en in de run-logs. Zet Ploegbaas daarom **niet** rechtstreeks op internet — het is
+een dashboard met één wachtwoord en een agent met volledige rechten. Op een vertrouwd
+netwerk achter een VPN is het bedoeld zoals het is.
+
 ## Snel starten
 
 ```bash
 node --no-warnings server.mjs          # standaard op poort 8123, huisstijl-poort instelbaar
+```
+
+### Op een Proxmox-server, met één regel
+
+Op de host, als root:
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/Theberas04/ploegbaas/main/deploy/proxmox/install.sh)"
+```
+
+Dat maakt een unprivileged Debian-container, zet Ploegbaas erin als service, installeert de
+Hermes Agent erbij (de agent die het werk doet) en zet het meldkanaal klaar. Eerst kijken
+zonder iets aan te maken: zet `DROOG=1` ervoor. Bijsturen kan met `CORES`, `MEMORY`, `DISK`,
+`STATIC_IP`/`GATEWAY`, `PLOEGBAAS_POORT`, `PLOEGBAAS_MELDWEBHOOK` en — voor je eigen model —
+`PLOEGBAAS_LLM_URL` + `PLOEGBAAS_LLM_MODEL`:
+
+```bash
+CORES=4 MEMORY=8192 STATIC_IP=192.168.1.100/24 GATEWAY=192.168.1.1 \
+  PLOEGBAAS_LLM_URL=http://192.168.1.100:11434/v1 PLOEGBAAS_LLM_MODEL=Llama-3.2-3B-Instruct-Q4_K_M \
+  bash -c "$(curl -fsSL https://raw.githubusercontent.com/Theberas04/ploegbaas/main/deploy/proxmox/install.sh)"
 ```
 
 Het wachtwoord wordt de eerste keer aangemaakt en staat in `data/wachtwoord.txt`.
@@ -75,6 +153,9 @@ aanwezig met een beperking · **nee** = niet gebouwd.
 | Agenten met rol, titel en adapter | ja | `hermes`, `opdracht`, `http` |
 | Hartslag: agent pakt zelf toegewezen werk | ja | Elke 15 seconden; één run per agent tegelijk |
 | Runs met volledige log en live bijwerken | ja | Logbestand per run plus een live kanaal (SSE) in de pagina |
+| Meldingen meteen doorgeven aan een webhook | ja | JSON per gebeurtenis, optioneel ondertekend (HMAC-SHA256); de pagina Meldingen toont wat er verstuurd is |
+| Werk meteen oppakken, zonder wachttijd | ja | Nieuwe taak of goedkeuring start de agent direct (~0,5 s) in plaats van bij de volgende hartslag |
+| Installatie op een Proxmox-server met één regel | ja | `deploy/proxmox/install.sh`: container, service, Hermes Agent erbij en het meldkanaal klaar |
 | Nakijken en goedkeuren | ja | Goedkeuren of terugsturen met opmerking |
 | Routines (terugkerend werk) | ja | Interval in minuten, met een knop om er nu één te starten |
 | Budgetten met harde stop | deels | Je vult een maandbudget in en Ploegbaas pauzeert de agent als het op is; kosten per run zijn **handmatig** (er is nog geen prijstabel per model) |
@@ -93,6 +174,7 @@ aanwezig met een beperking · **nee** = niet gebouwd.
 server.mjs              de hele server: API, hartslag, adapters, uitvoering, logboek
 public/index.html       de hele pagina (HTML + CSS + JavaScript, geen bouwstap)
 deploy/systemd/         service-eenheid voor een container of VM
+deploy/proxmox/         de installatiekit: one-liner, container maken, inrichten, controle, diagnose
 data/                   database, wachtwoord, run-logs (horen niet in git)
 docs/screenshots/       de schermafbeeldingen uit deze README
 ```

@@ -14,6 +14,7 @@
 //   * een geslaagde run gaat naar "nakijken": een mens keurt goed of stuurt terug.
 
 import http from 'node:http';
+import os from 'node:os';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -118,6 +119,14 @@ CREATE TABLE IF NOT EXISTS routine (
   interval_minuten INTEGER DEFAULT 60, actief INTEGER DEFAULT 1, laatste_start TEXT,
   taak_titel TEXT NOT NULL, taak_omschrijving TEXT DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS instelling (
+  sleutel TEXT PRIMARY KEY, waarde TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS melding (
+  id INTEGER PRIMARY KEY, soort TEXT NOT NULL, tekst TEXT NOT NULL,
+  agent_id INTEGER, taak_id INTEGER, tijd TEXT NOT NULL,
+  kanaal TEXT DEFAULT '', uitkomst TEXT DEFAULT 'lokaal'
+);
 `);
 
 const nu = () => new Date().toISOString();
@@ -127,6 +136,69 @@ function logActiviteit(soort, tekst, { agentId = null, taakId = null } = {}) {
   db.prepare('INSERT INTO activiteit (soort, tekst, agent_id, taak_id, tijd) VALUES (?,?,?,?,?)')
     .run(soort, tekst, agentId, taakId, nu());
   zend({ soort: 'activiteit', tekst: `${tekst}` });
+}
+
+// --- meldingen: het dashboard vertelt meteen wat er gebeurt -------------------
+// Elke gebeurtenis komt in de tabel `melding` (zichtbaar op de pagina Meldingen)
+// en gaat, als er een meldkanaal is ingesteld, direct als JSON naar dat adres.
+// Zo kan een agent (bijvoorbeeld een Hermes-webhookroute) meteen in actie komen,
+// zonder te wachten tot iemand het dashboard opent.
+const instelling = (sleutel, standaard = '') => {
+  const r = db.prepare('SELECT waarde FROM instelling WHERE sleutel = ?').get(sleutel);
+  return r && r.waarde !== null && r.waarde !== undefined ? r.waarde : standaard;
+};
+const zetInstelling = (sleutel, waarde) => db
+  .prepare(`INSERT INTO instelling (sleutel, waarde) VALUES (?,?)
+            ON CONFLICT(sleutel) DO UPDATE SET waarde = excluded.waarde`)
+  .run(sleutel, String(waarde ?? ''));
+
+function eigenAdres() {
+  for (const kaarten of Object.values(os.networkInterfaces())) {
+    for (const k of kaarten || []) {
+      if (k.family === 'IPv4' && !k.internal) return k.address;
+    }
+  }
+  return 'localhost';
+}
+
+async function meld(soort, tekst, { agentId = null, taakId = null } = {}) {
+  const tijd = nu();
+  db.prepare('INSERT INTO melding (soort, tekst, agent_id, taak_id, tijd) VALUES (?,?,?,?,?)')
+    .run(soort, tekst, agentId, taakId, tijd);
+  const id = rij();
+  zend({ soort: 'melding', meldSoort: soort, tekst, tijd });
+
+  const aan = instelling('melden_aan', process.env.PLOEGBAAS_MELDWEBHOOK ? '1' : '0') === '1';
+  const adres = instelling('meld_kanaal', process.env.PLOEGBAAS_MELDWEBHOOK || '');
+  if (!aan || !adres) return;
+
+  const lijf = JSON.stringify({
+    soort, tekst, tijd, dashboard: `http://${eigenAdres()}:${POORT}`,
+    taak: taakId ? db.prepare('SELECT id, titel, status, prioriteit FROM taak WHERE id = ?').get(taakId) : null,
+    agent: agentId ? db.prepare('SELECT id, naam, rol FROM agent WHERE id = ?').get(agentId) : null,
+  });
+  const kop = { 'Content-Type': 'application/json', 'X-Ploegbaas-Soort': soort };
+  const geheim = instelling('meld_geheim', '');
+  if (geheim) {
+    // Zelfde vorm als GitHub: sha256=<hex>. Daarmee accepteert een
+    // Hermes-webhookroute de melding zonder extra instelling.
+    kop['X-Hub-Signature-256'] = 'sha256=' + crypto.createHmac('sha256', geheim).update(lijf).digest('hex');
+    kop['X-Ploegbaas-Geheim'] = geheim;
+  }
+  try {
+    const antwoord = await fetch(adres, { method: 'POST', headers: kop, body: lijf, signal: AbortSignal.timeout(10_000) });
+    db.prepare('UPDATE melding SET kanaal = ?, uitkomst = ? WHERE id = ?')
+      .run(adres, antwoord.ok ? `verzonden (${antwoord.status})` : `geweigerd (${antwoord.status})`, id);
+  } catch (fout) {
+    db.prepare('UPDATE melding SET kanaal = ?, uitkomst = ? WHERE id = ?')
+      .run(adres, 'mislukt: ' + String(fout.message || fout).slice(0, 120), id);
+  }
+}
+
+// Een nieuwe taak of goedkeuring hoeft niet te wachten tot de volgende
+// hartslag (15 s): werk meteen oppakken als de mutatie verwerkt is.
+function planNu(vertraging = 300) {
+  setTimeout(() => { try { hartslag(); } catch { /* de volgende tik probeert het weer */ } }, vertraging);
 }
 
 // --- live kanaal (server-sent events) ---------------------------------------
@@ -204,6 +276,7 @@ function startRun(agent, taak) {
   db.prepare("UPDATE taak SET status = 'bezig', bijgewerkt = ? WHERE id = ?").run(tijd, taak.id);
   logActiviteit('run', `${agent.naam} begint aan taak ${taak.id}: ${taak.titel}`, { agentId: agent.id, taakId: taak.id });
   zend({ soort: 'run', runId, status: 'lopend', agent: agent.naam, taak: taak.id });
+  meld('run-bezig', `${agent.naam} begint aan taak ${taak.id}: ${taak.titel}`, { agentId: agent.id, taakId: taak.id });
 
   const log = fs.createWriteStream(logpad, { flags: 'a' });
   let afgerond = false;
@@ -224,12 +297,16 @@ function startRun(agent, taak) {
         .run(taak.id, agent.id, eind, 'open');
       logActiviteit('run', `${agent.naam} is klaar met taak ${taak.id}; wacht op nakijken.`, { agentId: agent.id, taakId: taak.id });
       zend({ soort: 'taak', taakId: taak.id, status: 'review' });
+      meld('nakijken', `${agent.naam} is klaar met taak ${taak.id} (${taak.titel}); er wacht iets op jouw oordeel.`,
+        { agentId: agent.id, taakId: taak.id });
     } else {
       db.prepare("UPDATE taak SET status = 'geblokkeerd', bijgewerkt = ? WHERE id = ?").run(eind, taak.id);
       db.prepare('INSERT INTO bericht (taak_id, van_soort, van_naam, tekst, tijd) VALUES (?,?,?,?,?)')
         .run(taak.id, 'systeem', 'Ploegbaas', `Run ${status} (code ${exitCode}).\n\n${samenvatting}`, eind);
       logActiviteit('run', `${agent.naam} liep vast op taak ${taak.id} (${status}).`, { agentId: agent.id, taakId: taak.id });
       zend({ soort: 'taak', taakId: taak.id, status: 'geblokkeerd' });
+      meld('geblokkeerd', `${agent.naam} liep vast op taak ${taak.id} (${taak.titel}): ${status}.`,
+        { agentId: agent.id, taakId: taak.id });
     }
     zend({ soort: 'run', runId, status, agent: agent.naam, taak: taak.id });
     log.end();
@@ -348,6 +425,7 @@ function hartslag() {
                   VALUES (?,?,?,?,?,?,?,?,?)`)
         .run(r.bedrijf_id, r.taak_titel, r.taak_omschrijving, 'nieuw', 'normaal', r.agent_id, 'routine', tijd, tijd);
       logActiviteit('routine', `Routine "${r.naam}" maakte een nieuwe taak.`, { agentId: r.agent_id });
+      meld('routine', `Routine "${r.naam}" maakte een nieuwe taak: ${r.taak_titel}.`, { agentId: r.agent_id });
     }
     db.prepare('UPDATE routine SET laatste_start = ? WHERE id = ?').run(tijd, r.id);
   }
@@ -359,6 +437,7 @@ function hartslag() {
       if (besteed >= a.budget_maand_centen) {
         db.prepare("UPDATE agent SET status = 'gepauzeerd' WHERE id = ?").run(a.id);
         logActiviteit('budget', `${a.naam} is gepauzeerd: maandbudget bereikt.`, { agentId: a.id });
+        meld('budget', `${a.naam} is gepauzeerd: het maandbudget is bereikt.`, { agentId: a.id });
         continue;
       }
     }
@@ -546,6 +625,7 @@ async function verwerk(verzoek, antwoord) {
     if (methode === 'POST' && delen[3] === 'hervat') {
       db.prepare("UPDATE agent SET status = 'actief' WHERE id = ?").run(agent.id);
       logActiviteit('agent', `${agent.naam} is weer actief.`, { agentId: agent.id });
+      planNu();
       return stuur(antwoord, 200, { ok: true });
     }
     if (methode === 'POST' && delen[3] === 'wek') {
@@ -584,6 +664,8 @@ async function verwerk(verzoek, antwoord) {
           lijf.agent_id ? Number(lijf.agent_id) : null, lijf.labels || '', lijf.ouder_id ? Number(lijf.ouder_id) : null, tijd, tijd);
       const id = rij();
       logActiviteit('taak', `Nieuwe taak ${id}: ${lijf.titel}`, { taakId: id });
+      meld('taak-nieuw', `Nieuwe taak ${id}: ${lijf.titel}`, { agentId: lijf.agent_id ? Number(lijf.agent_id) : null, taakId: id });
+      if (lijf.agent_id) planNu();
       return stuur(antwoord, 201, taakMetRelaties(id));
     }
     const taak = db.prepare('SELECT * FROM taak WHERE id = ?').get(Number(delen[2]));
@@ -598,6 +680,7 @@ async function verwerk(verzoek, antwoord) {
           lijf.agent_id === undefined ? taak.agent_id : (lijf.agent_id ? Number(lijf.agent_id) : null),
           lijf.labels ?? taak.labels, nu(), taak.id);
       logActiviteit('taak', `Taak ${taak.id} bijgewerkt.`, { taakId: taak.id });
+      if (db.prepare('SELECT status FROM taak WHERE id = ?').get(taak.id).status === 'nieuw') planNu();
       return stuur(antwoord, 200, taakMetRelaties(taak.id));
     }
     if (methode === 'POST' && delen[3] === 'bericht') {
@@ -610,6 +693,7 @@ async function verwerk(verzoek, antwoord) {
         db.prepare("UPDATE taak SET status = 'nieuw', agent_id = COALESCE(agent_id, ?) WHERE id = ?").run(taak.agent_id, taak.id);
       }
       zend({ soort: 'taak', taakId: taak.id });
+      planNu();
       return stuur(antwoord, 201, taakMetRelaties(taak.id));
     }
     if (methode === 'POST' && (delen[3] === 'keur-goed' || delen[3] === 'keur-af')) {
@@ -627,8 +711,36 @@ async function verwerk(verzoek, antwoord) {
           (goed ? 'Goedgekeurd.' : 'Terug naar de agent.') + (lijf.opmerking ? '\n\n' + lijf.opmerking : ''), nu());
       logActiviteit('goedkeuring', `Taak ${taak.id} ${goed ? 'goedgekeurd' : 'afgekeurd'}.`, { taakId: taak.id, agentId: taak.agent_id });
       zend({ soort: 'taak', taakId: taak.id, status: goed ? 'klaar' : 'nieuw' });
+      meld(goed ? 'goedgekeurd' : 'afgekeurd', `Taak ${taak.id} (${taak.titel}) is ${goed ? 'goedgekeurd' : 'teruggestuurd'}.`,
+        { agentId: taak.agent_id, taakId: taak.id });
+      if (!goed) planNu();
       return stuur(antwoord, 200, taakMetRelaties(taak.id));
     }
+  }
+
+  // ------- runs
+  // ------- meldingen: wat het dashboard naar buiten meldt
+  if (delen[1] === 'meldingen') {
+    if (methode === 'GET' && !delen[2]) {
+      return stuur(antwoord, 200, {
+        aan: instelling('melden_aan', process.env.PLOEGBAAS_MELDWEBHOOK ? '1' : '0') === '1',
+        kanaal: instelling('meld_kanaal', process.env.PLOEGBAAS_MELDWEBHOOK || ''),
+        geheim_ingesteld: Boolean(instelling('meld_geheim', '')),
+        lijst: db.prepare('SELECT * FROM melding ORDER BY id DESC LIMIT 60').all(),
+      });
+    }
+    if (methode === 'POST' && delen[2] === 'proef') {
+      await meld('proef', 'Proefmelding vanuit Ploegbaas.');
+      return stuur(antwoord, 200, db.prepare('SELECT * FROM melding ORDER BY id DESC LIMIT 1').get());
+    }
+  }
+  if (delen[1] === 'instellingen' && (methode === 'PATCH' || methode === 'PUT')) {
+    const lijf = await leesLijf(verzoek);
+    if (lijf.melden_aan !== undefined) zetInstelling('melden_aan', lijf.melden_aan ? '1' : '0');
+    if (lijf.meld_kanaal !== undefined) zetInstelling('meld_kanaal', String(lijf.meld_kanaal).trim());
+    if (lijf.meld_geheim !== undefined) zetInstelling('meld_geheim', String(lijf.meld_geheim));
+    logActiviteit('instelling', 'Meldkanaal bijgewerkt.');
+    return stuur(antwoord, 200, { ok: true, aan: instelling('melden_aan') === '1', kanaal: instelling('meld_kanaal') });
   }
 
   // ------- runs

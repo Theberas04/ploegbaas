@@ -154,6 +154,7 @@ function tekenZijbalk() {
       ${link('/agenten', 'Agenten')}
       ${link('/runs', 'Runs')}
       ${link('/activiteit', 'Logboek')}
+      ${link('/meldingen', 'Meldingen')}
     </nav>
     <div style="margin-top:auto">
       <button class="knop los klein" onclick="uitloggen()" style="width:100%">Uitloggen</button>
@@ -585,6 +586,57 @@ function tekenActiviteit() {
   </main>`;
 }
 
+function tekenMeldingen() {
+  const m = S.meldingen || { aan: false, kanaal: '', geheim_ingesteld: false, lijst: [] };
+  return `<main>
+    <h1>Meldingen</h1>
+    <p class="onder">Elke gebeurtenis gaat meteen als JSON naar een adres naar keuze — zodat een agent of een
+      ander systeem direct weet dat er werk is, zonder dat iemand het dashboard opent.</p>
+    <div class="twee">
+      <div class="paneel" style="padding:16px">
+        <div class="veld"><label>Meldingen doorsturen</label><select id="m-aan">
+          <option value="0"${m.aan ? '' : ' selected'}>uit</option>
+          <option value="1"${m.aan ? ' selected' : ''}>aan</option></select></div>
+        <div class="veld"><label>Adres (webhook)</label>
+          <input id="m-kanaal" value="${esc(m.kanaal)}" placeholder="http://192.168.1.100:8644/webhook/…"></div>
+        <div class="veld"><label>Geheim (optioneel, om te ondertekenen)</label>
+          <input id="m-geheim" type="password" placeholder="${m.geheim_ingesteld ? 'al ingesteld — leeg laten houdt het' : 'geen'}"></div>
+        <button class="knop" onclick="bewaarMeldkanaal()">Opslaan</button>
+        <button class="knop los" onclick="proefMelding()">Proefmelding sturen</button>
+        <p class="zacht" style="margin-top:14px">De melding is JSON met <code>soort</code>, <code>tekst</code>,
+          <code>tijd</code>, <code>dashboard</code>, <code>taak</code> en <code>agent</code>. Met een geheim erbij gaat
+          er een <code>X-Hub-Signature-256</code>-kop mee, precies zoals GitHub die stuurt — daardoor werkt een
+          Hermes-webhookroute meteen.</p>
+        <p class="zacht">Soorten: taak-nieuw, run-bezig, nakijken, geblokkeerd, goedgekeurd, afgekeurd, routine, budget, proef.</p>
+      </div>
+      <div class="paneel">
+        <div class="paneel-kop"><b>Wat er gemeld is</b><span class="rechts"><button class="knop los klein" onclick="laadAlles()">Verversen</button></span></div>
+        <table><thead><tr><th>Soort</th><th>Melding</th><th>Kanaal</th></tr></thead>
+        <tbody>${(m.lijst || []).map((x) => `<tr>
+          <td>${pil('nieuw', x.soort)}</td>
+          <td>${esc(x.tekst)}<div class="zacht">${tijd(x.tijd)}</div></td>
+          <td class="zacht">${x.kanaal ? esc(x.kanaal) + ' — ' + esc(x.uitkomst) : 'alleen in het dashboard'}</td>
+        </tr>`).join('') || '<tr><td colspan="3" class="leeg">Nog niets gemeld.</td></tr>'}</tbody></table>
+      </div>
+    </div>
+  </main>`;
+}
+async function bewaarMeldkanaal() {
+  const geheim = document.getElementById('m-geheim').value;
+  const lijf = {
+    melden_aan: document.getElementById('m-aan').value === '1',
+    meld_kanaal: document.getElementById('m-kanaal').value,
+  };
+  if (geheim) lijf.meld_geheim = geheim;
+  await api('/instellingen', { method: 'PATCH', lijf });
+  await laadAlles();
+}
+async function proefMelding() {
+  const r = await api('/meldingen/proef', { method: 'POST' });
+  alert('Proefmelding verstuurd. Uitkomst: ' + (r.uitkomst || 'onbekend'));
+  await laadAlles();
+}
+
 function tekenInlog() {
   return `<div class="inlog"><div class="kaart">
     ${tekenMerk()}
@@ -615,17 +667,18 @@ function teken() {
   else if (S.pad.startsWith('/runs')) inhoud = tekenRuns();
   else if (S.pad.startsWith('/routines')) inhoud = tekenRoutines();
   else if (S.pad.startsWith('/activiteit')) inhoud = tekenActiviteit();
+  else if (S.pad.startsWith('/meldingen')) inhoud = tekenMeldingen();
   else inhoud = tekenDashboard();
   app.innerHTML = tekenZijbalk() + inhoud;
 }
 
 async function laadAlles() {
   try {
-    const [overzicht, taken, agenten, runs, goedkeuringen, routines, activiteit] = await Promise.all([
+    const [overzicht, taken, agenten, runs, goedkeuringen, routines, activiteit, meldingen] = await Promise.all([
       api('/overzicht'), api('/taken'), api('/agenten'), api('/runs?limiet=60'),
-      api('/goedkeuringen'), api('/routines'), api('/activiteit'),
+      api('/goedkeuringen'), api('/routines'), api('/activiteit'), api('/meldingen'),
     ]);
-    Object.assign(S, { overzicht, taken, agenten, runs, goedkeuringen, routines, activiteit });
+    Object.assign(S, { overzicht, taken, agenten, runs, goedkeuringen, routines, activiteit, meldingen });
     S.ingelogd = true;
     if (S.pad.startsWith('/taken/')) await laadTaak(Number(S.pad.split('/')[2]), false);
     teken();
