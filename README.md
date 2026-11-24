@@ -226,20 +226,30 @@ node --no-warnings server.mjs controleer
 ### De agent toegang geven tot Proxmox
 
 De agent zit in een container en ziet daar niets buiten. Wil je dat hij zelf containers kan
-nakijken of herstarten (`pct`, `qm`), geef hem dan ssh-toegang tot de nodes. Op de host, als
-root:
+nakijken of herstarten, geef hem dan ssh-toegang tot de nodes — en niet meer dan dat. Op de
+host, als root:
 
 ```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/Theberas04/ploegbaas/main/deploy/proxmox/geef-proxmox-toegang.sh)"
 ```
 
 Het script zoekt zelf de container met de agent (of je geeft `CTID=102` mee), maakt daar een
-sleutel in aan, zet die in `/root/.ssh/authorized_keys` van **elke** node in het cluster en
-laat aan het eind zien dat de agent vanaf zijn eigen container bij die nodes kan. Twee keer
-draaien kan geen kwaad: de tweede keer pakt hij de bestaande sleutel en zet er niets dubbel in.
+sleutel in aan en zet op **elke** node in het cluster:
 
-Let op: dit is volledige root-toegang tot de Proxmox-hosts, niet alleen `pct`. Weghalen: haal
-op elke node de regel met `hermes-ict-agent` uit `/root/.ssh/authorized_keys`.
+- een gebruiker `hermes` zonder wachtwoord — alleen die ene sleutel werkt;
+- die sleutel werkt alleen vanaf het adres van de agent-container (`VANAF=…`, standaard het
+  adres van die container zelf);
+- sudo voor precies twee dingen: `/usr/sbin/pct` en `/usr/sbin/qm`. De agent beheert dus
+  containers en VM's, maar komt niet aan de host zelf: geen bestanden buiten de containers,
+  geen netwerk, geen pakketten.
+
+Aan het eind laat het script vanaf de agent zelf zien dat `pct` werkt én dat iets anders dan
+`pct`/`qm` geweigerd wordt. Twee keer draaien kan geen kwaad: de tweede keer pakt het de
+bestaande sleutel en zet niets dubbel. Had je een eerdere variant met root-toegang gedraaid,
+dan haalt dit script die sleutel uit `/root/.ssh/authorized_keys`.
+
+Weghalen: `rm /etc/sudoers.d/hermes-ict` en de regel met `hermes-ict-agent` uit
+`/home/hermes/.ssh/authorized_keys`, op elke node.
 
 Als service (start ook na een reboot):
 
@@ -306,7 +316,7 @@ Eerlijke functielijst. **ja** = werkt hier · **deels** = aanwezig met een beper
 | Meldingen meteen doorgeven aan een webhook | ja | JSON per gebeurtenis, optioneel ondertekend (HMAC-SHA256); de pagina Meldingen toont wat er verstuurd is |
 | Werk meteen oppakken, zonder wachttijd | ja | Nieuwe taak of goedkeuring start de agent direct (~0,5 s) in plaats van bij de volgende hartslag |
 | Installatie op een Proxmox-server met één regel | ja | `deploy/proxmox/install.sh`: container, service, Hermes Agent erbij en het meldkanaal klaar |
-| De agent toegang geven tot de Proxmox-nodes | ja | `deploy/proxmox/geef-proxmox-toegang.sh`: sleutel in de agent-container, toegang op elke node, met een proef vanaf de agent zelf |
+| De agent toegang geven tot de Proxmox-nodes | ja | `deploy/proxmox/geef-proxmox-toegang.sh`: eigen gebruiker `hermes`, sleutel alleen vanaf de agent-container, sudo alleen voor `pct`/`qm`, met een proef vanaf de agent zelf |
 | Bijwerken vanaf het dashboard | ja | Knop in de zijbalk: haalt de nieuwste versie, controleert haar, bewaart de oude in `.vorige/`, herstart en zet bij een mislukking zichzelf terug |
 | Nakijken en goedkeuren | ja | Goedkeuren of terugsturen met opmerking |
 | Routines (terugkerend werk) | ja | Interval in minuten, met een knop om er nu één te starten |

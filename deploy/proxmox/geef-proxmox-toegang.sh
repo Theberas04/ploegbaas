@@ -1,14 +1,20 @@
 #!/bin/bash
-# Geeft de Hermes-agent in zijn container ssh-toegang tot de Proxmox-nodes,
-# zodat hij pct/qm kan gebruiken. Draai dit als root op een node van het cluster:
+# Geeft één Hermes-agent ssh-toegang tot de Proxmox-nodes — en niet meer dan dat.
+#
+# Draai dit als root op een node van het cluster:
 #
 #   bash -c "$(curl -fsSL https://raw.githubusercontent.com/Theberas04/ploegbaas/main/deploy/proxmox/geef-proxmox-toegang.sh)"
 #
-# Met CTID=102 kies je zelf de container; zonder die variabele zoekt het script de
-# draaiende container waarin de Hermes-agent zit.
+# Wat het op elke node regelt:
+#   - gebruiker "hermes": geen wachtwoord, alleen deze sleutel
+#   - die sleutel werkt alleen vanaf het adres van de agent-container (VANAF=…)
+#   - sudo alleen voor /usr/sbin/pct en /usr/sbin/qm — containers en VM's beheren,
+#     maar niets anders op de host
+#   - de sleutel van de eerdere root-variant wordt uit /root/.ssh/authorized_keys gehaald
 #
-# Dit geeft volledige root-toegang tot de Proxmox-hosts. Weghalen: haal op elke
-# node de regel met "hermes-ict-agent" uit /root/.ssh/authorized_keys.
+# Opties: CTID=102 (anders zoekt het script de container), VANAF=192.168.1.248 of een
+# kommalijst, GEBRUIKER=hermes. Weghalen: rm /etc/sudoers.d/hermes-ict en haal de regel
+# met hermes-ict-agent uit /home/hermes/.ssh/authorized_keys op elke node.
 set -euo pipefail
 
 zeg()  { printf '%s\n' "$*"; }
@@ -16,6 +22,7 @@ stap() { printf '\n== %s ==\n' "$*"; }
 fout() { printf 'FOUT: %s\n' "$*" >&2; exit 1; }
 q()    { printf '%q' "$1"; }   # elk argument apart quoten voor de remote shell
 
+GEBRUIKER=${GEBRUIKER:-hermes}
 SSH="ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8"
 
 # --- 0. het cluster --------------------------------------------------------
@@ -85,30 +92,66 @@ zeg "   $(echo "$SLEUTEL" | awk '{print $1, substr($2,1,16)"…", $3}')"
 # ook beschikbaar maken voor de gebruiker(s) in de container, niet alleen root
 op_node "$AGENT_NODE" pct exec "$CTID" -- sh -c 'for h in /home/*; do [ -d "$h" ] || continue; u=$(basename "$h"); mkdir -p "$h/.ssh" && chmod 700 "$h/.ssh"; cp -n /root/.ssh/id_ed25519 "$h/.ssh/id_ed25519" 2>/dev/null || true; cp -n /root/.ssh/id_ed25519.pub "$h/.ssh/id_ed25519.pub" 2>/dev/null || true; chown -R "$u:$u" "$h/.ssh" 2>/dev/null || true; chmod 600 "$h/.ssh/id_ed25519" 2>/dev/null || true; done; true'
 
-# --- 3. de sleutel op elke node -------------------------------------------
-stap "3. toegang op de nodes"
-TOEVOEGEN="mkdir -p /root/.ssh && chmod 700 /root/.ssh && touch /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys && { grep -qF $(q "$SLEUTEL") /root/.ssh/authorized_keys || echo $(q "$SLEUTEL") >> /root/.ssh/authorized_keys; }"
+# --- 3. vanaf welk adres mag de sleutel werken? ---------------------------
+stap "3. vanaf welk adres mag de sleutel werken?"
+if [ -z "${VANAF:-}" ]; then
+  VANAF=$(op_node "$AGENT_NODE" pct exec "$CTID" -- sh -c "hostname -I 2>/dev/null | awk '{print \$1}'" | tr -d '\r' || true)
+  [ -n "$VANAF" ] || fout "kon het adres van container $CTID niet bepalen; geef VANAF=... mee"
+  zeg "   automatisch: $VANAF (het adres van container $CTID)"
+else
+  zeg "   zelf opgegeven: $VANAF"
+fi
+
+# --- 4. toegang op elke node ----------------------------------------------
+stap "4. toegang op de nodes"
+HUIS=/home/$GEBRUIKER
+REGELS=$(cat <<EINDE
+set -e
+id -u $(q "$GEBRUIKER") >/dev/null 2>&1 || useradd -m -s /bin/bash $(q "$GEBRUIKER")
+mkdir -p $(q "$HUIS/.ssh")
+chmod 700 $(q "$HUIS/.ssh")
+touch $(q "$HUIS/.ssh/authorized_keys")
+sed -i '/hermes-ict-agent/d' $(q "$HUIS/.ssh/authorized_keys")
+echo $(q "from=\"$VANAF\",restrict,pty $SLEUTEL") >> $(q "$HUIS/.ssh/authorized_keys")
+chmod 600 $(q "$HUIS/.ssh/authorized_keys")
+chown -R $(q "$GEBRUIKER"):$(q "$GEBRUIKER") $(q "$HUIS/.ssh")
+printf '%s\n' $(q "$GEBRUIKER ALL=(root) NOPASSWD: /usr/sbin/pct, /usr/sbin/qm") > /etc/sudoers.d/hermes-ict.tmp
+chmod 440 /etc/sudoers.d/hermes-ict.tmp
+visudo -cf /etc/sudoers.d/hermes-ict.tmp >/dev/null
+mv -f /etc/sudoers.d/hermes-ict.tmp /etc/sudoers.d/hermes-ict
+if [ -f /root/.ssh/authorized_keys ]; then sed -i '/hermes-ict-agent/d' /root/.ssh/authorized_keys; fi
+EINDE
+)
 for n in $NODES; do
   if [ "$n" = "$DEZE" ]; then
-    if bash -c "$TOEVOEGEN"; then zeg "   node $n: sleutel staat erin"; else zeg "   node $n: NIET gelukt"; fi
+    if bash -c "$REGELS"; then zeg "   node $n: gebruiker $GEBRUIKER + sudo pct/qm geregeld"; else zeg "   node $n: NIET gelukt"; fi
   else
-    if $SSH root@"${ADRES[$n]}" "$TOEVOEGEN"; then zeg "   node $n: sleutel staat erin"; else zeg "   node $n: NIET gelukt"; fi
+    if $SSH root@"${ADRES[$n]}" "$REGELS"; then zeg "   node $n: gebruiker $GEBRUIKER + sudo pct/qm geregeld"; else zeg "   node $n: NIET gelukt"; fi
   fi
 done
 
-# --- 4. proef: kan de agent er zelf bij? ----------------------------------
-stap "4. proef: kan de agent bij de nodes?"
+# --- 5. proef: wat mag de agent wel en niet? ------------------------------
+stap "5. proef vanaf de agent zelf"
 for n in $NODES; do
-  uit=$(op_node "$AGENT_NODE" pct exec "$CTID" -- sh -c "$SSH root@${ADRES[$n]} 'hostname -s; pct list | head -3'" 2>&1 || true)
-  if echo "$uit" | grep -qx "$n"; then
-    zeg "   node $n: OK — $(echo "$uit" | tail -n +2 | head -2 | tr '\n' ' ')"
+  mag=$(op_node "$AGENT_NODE" pct exec "$CTID" -- sh -c "$SSH -i /root/.ssh/id_ed25519 $GEBRUIKER@${ADRES[$n]} 'sudo /usr/sbin/pct list | head -3'" 2>&1 || true)
+  mag_niet=$(op_node "$AGENT_NODE" pct exec "$CTID" -- sh -c "$SSH -i /root/.ssh/id_ed25519 $GEBRUIKER@${ADRES[$n]} 'sudo /usr/bin/id -u'" 2>&1 || true)
+  if echo "$mag" | grep -q "VMID"; then
+    zeg "   node $n: pct mag — $(echo "$mag" | tail -n +2 | head -1 | tr -s ' ')"
   else
-    zeg "   node $n: NIET gelukt — $(echo "$uit" | tr '\n' ' ')"
+    zeg "   node $n: pct mag NIET — $(echo "$mag" | tr '\n' ' ')"
+  fi
+  if echo "$mag_niet" | grep -qi "not allowed\|niet toegestaan"; then
+    zeg "   node $n: iets anders dan pct/qm wordt geweigerd (goed)"
+  else
+    zeg "   node $n: LET OP, 'id -u' gaf: $(echo "$mag_niet" | tr '\n' ' ')"
   fi
 done
 
-# --- 5. klaar -------------------------------------------------------------
-stap "5. klaar"
-zeg "De agent in container $CTID (node $AGENT_NODE) kan nu als root op: $(echo "$NODES" | tr '\n' ' ')"
-zeg "Hij kan daarmee pct/qm gebruiken, maar ook alles anders op de host — het is root."
-zeg "Weghalen: haal op elke node de regel met hermes-ict-agent uit /root/.ssh/authorized_keys."
+# --- 6. klaar -------------------------------------------------------------
+stap "6. klaar"
+zeg "De agent in container $CTID (node $AGENT_NODE) kan vanaf $VANAF als $GEBRUIKER inloggen op:"
+zeg "   $(echo "$NODES" | tr '\n' ' ')"
+zeg "Zo gebruikt hij het:  ssh $GEBRUIKER@<node> 'sudo /usr/sbin/pct list'"
+zeg "Hij komt daarmee aan containers en VM's, maar niet aan de host zelf."
+zeg "Weghalen: rm /etc/sudoers.d/hermes-ict en haal de regel met hermes-ict-agent uit"
+zeg "          /home/$GEBRUIKER/.ssh/authorized_keys op elke node."
