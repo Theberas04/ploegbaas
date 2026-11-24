@@ -251,6 +251,26 @@ dan haalt dit script die sleutel uit `/root/.ssh/authorized_keys`.
 Weghalen: `rm /etc/sudoers.d/hermes-ict` en de regel met `hermes-ict-agent` uit
 `/home/hermes/.ssh/authorized_keys`, op elke node.
 
+### Ssh aanzetten in al je containers
+
+Staat er in een container geen ssh, dan kom je er alleen via de host in (`pct exec`). Dit zet het
+in één keer overal aan:
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/Theberas04/ploegbaas/main/deploy/proxmox/ssh-op-alles.sh)"
+```
+
+Het loopt alle draaiende containers op elke node langs en regelt per container: `openssh-server`
+installeren als het er niet is, de dienst aanzetten, `PermitRootLogin prohibit-password` zetten,
+de sleutel van de Hermes-agent in `/root/.ssh/authorized_keys` leggen en daarna vanaf de agent
+zelf testen of inloggen echt lukt. Je krijgt per container één regel met het adres en de uitslag,
+plus een samenvatting van wat nog aandacht vraagt.
+
+- Je eigen sleutel erbij: `SLEUTEL="ssh-ed25519 AAAA… jij@laptop"` (alleen de publieke, nooit de
+  private).
+- Andere agent-container: `CTID=…`.
+- VM's worden getoond maar niet aangeraakt — daar moet ssh in de gast zelf aan staan.
+
 Als service (start ook na een reboot):
 
 ```bash
@@ -317,6 +337,7 @@ Eerlijke functielijst. **ja** = werkt hier · **deels** = aanwezig met een beper
 | Werk meteen oppakken, zonder wachttijd | ja | Nieuwe taak of goedkeuring start de agent direct (~0,5 s) in plaats van bij de volgende hartslag |
 | Installatie op een Proxmox-server met één regel | ja | `deploy/proxmox/install.sh`: container, service, Hermes Agent erbij en het meldkanaal klaar |
 | De agent toegang geven tot de Proxmox-nodes | ja | `deploy/proxmox/geef-proxmox-toegang.sh`: eigen gebruiker `hermes`, sleutel alleen vanaf de agent-container, sudo alleen voor `pct`/`qm`, met een proef vanaf de agent zelf |
+| Ssh aanzetten in al je containers | ja | `deploy/proxmox/ssh-op-alles.sh`: openssh-server, dienst en sleutel in elke draaiende container, met een inlogproef per container |
 | Bijwerken vanaf het dashboard | ja | Knop in de zijbalk: haalt de nieuwste versie, controleert haar, bewaart de oude in `.vorige/`, herstart en zet bij een mislukking zichzelf terug |
 | Nakijken en goedkeuren | ja | Goedkeuren of terugsturen met opmerking |
 | Routines (terugkerend werk) | ja | Interval in minuten, met een knop om er nu één te starten |
