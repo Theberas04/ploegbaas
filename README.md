@@ -244,9 +244,12 @@ sleutel in aan en zet op **elke** node in het cluster:
   geen netwerk, geen pakketten.
 
 Aan het eind laat het script vanaf de agent zelf zien dat `pct` werkt én dat iets anders dan
-`pct`/`qm` geweigerd wordt. Twee keer draaien kan geen kwaad: de tweede keer pakt het de
-bestaande sleutel en zet niets dubbel. Had je een eerdere variant met root-toegang gedraaid,
-dan haalt dit script die sleutel uit `/root/.ssh/authorized_keys`.
+`pct`/`qm` geweigerd wordt. Het schrijft ook een skill (`proxmox-beheer`) in de container van de
+agent: de node-adressen, de gebruiker, waar de sleutel staat, welke commando's mogen en waar de
+grens ligt. Zo weet de agent zelf hoe hij het gebruikt, zonder dat je het hem hoeft uit te leggen
+— hij ziet de skill vanaf zijn volgende sessie. Twee keer draaien kan geen kwaad: de tweede keer
+pakt het de bestaande sleutel en zet niets dubbel. Had je een eerdere variant met root-toegang
+gedraaid, dan haalt dit script die sleutel uit `/root/.ssh/authorized_keys`.
 
 Weghalen: `rm /etc/sudoers.d/hermes-ict` en de regel met `hermes-ict-agent` uit
 `/home/hermes/.ssh/authorized_keys`, op elke node.

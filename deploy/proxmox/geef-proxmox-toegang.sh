@@ -130,8 +130,84 @@ for n in $NODES; do
   fi
 done
 
-# --- 5. proef: wat mag de agent wel en niet? ------------------------------
-stap "5. proef vanaf de agent zelf"
+# --- 5. de agent vertellen hoe hij het gebruikt ----------------------------
+stap "5. de agent de gegevens geven"
+SKILL_MAP=$(op_node "$AGENT_NODE" pct exec "$CTID" -- sh -c 'if [ -d /home/hermes/.hermes ]; then echo /home/hermes/.hermes/skills; elif [ -d /root/.hermes ]; then echo /root/.hermes/skills; else echo ""; fi' | tr -d '\r')
+if [ -z "$SKILL_MAP" ]; then
+  zeg "   geen .hermes-map in container $CTID gevonden; sla de skill over"
+else
+  TABEL=""
+  for n in $NODES; do TABEL="$TABEL| \`$n\` | ${ADRES[$n]} |
+"; done
+  SKILL=$(cat <<'EINDE'
+---
+name: proxmox-beheer
+description: "Use when managing Tom's Proxmox containers and VMs."
+version: 1.0.0
+author: Hermes Agent
+platforms: [linux]
+metadata:
+  hermes:
+    tags: [proxmox, pct, qm, containers, infra]
+    category: software-development
+---
+
+# Proxmox beheer
+
+Je hebt ssh-toegang tot de Proxmox-nodes van Tom. Daarmee beheer je **containers en VM's**:
+opvragen, in- en uitschakelen, inloggen met `pct exec`, bestanden overzetten, en `qm` voor VM's.
+
+## Waar
+
+| node | adres |
+|------|-------|
+@TABEL@
+Gebruiker `hermes`, zonder wachtwoord: alleen met de sleutel. Die staat in `~/.ssh/id_ed25519`
+(en `/root/.ssh/id_ed25519` als je als root draait). De hostkey wordt de eerste keer vastgelegd
+(`StrictHostKeyChecking=accept-new`), dat is hier goed.
+
+```bash
+ssh hermes@<adres> 'sudo /usr/sbin/pct list'
+ssh hermes@<adres> 'sudo /usr/sbin/pct status 140'
+ssh hermes@<adres> 'sudo /usr/sbin/pct exec 140 -- systemctl status jarvisd'
+```
+
+## Wat wel en niet
+
+- **Wel**: `pct` (list, status, config, exec, start, stop, shutdown, reboot, push, pull) en `qm`.
+  Precies dat staat in de sudo-regel, en niets anders.
+- **Niet**: sudo voor andere commando's. `sudo cat /etc/shadow` wordt geweigerd — dat is geen
+  fout in de toegang maar de grens. Iets op de host zelf (netwerk, opslag, `/etc/pve`) gaat dus
+  niet; zo'n vraag leg je bij Tom.
+- **Altijd het volledige pad**: `sudo /usr/sbin/pct`. `/usr/sbin` staat niet in je PATH.
+- **Niets zomaar herstarten of stoppen.** Eerst kijken (`status`, `pct exec <id> -- journalctl -u
+  <dienst> -n 50 --no-pager`), dan pas iets doen, en nooit iets wat Tom niet vroeg.
+- Binnen een container ben je root: daar kun je wél bestanden en diensten aanpassen. Wees daar
+  net zo voorzichtig als op de host.
+
+## Werkwijze
+
+1. `sudo /usr/sbin/pct list` per node: welke containers draaien, welke niet.
+2. Bij een klacht over een app: `pct exec <id> -- systemctl status <dienst>` en de laatste
+   regels uit `journalctl`.
+3. Vertel in het Nederlands wat je hebt gedaan en wat je vond, met de commando's erbij.
+EINDE
+)
+  SKILL=${SKILL//@TABEL@/$TABEL}
+  MAP="$SKILL_MAP/proxmox-beheer"
+  op_node "$AGENT_NODE" pct exec "$CTID" -- sh -c "mkdir -p $(q "$MAP")"
+  if [ "$AGENT_NODE" = "$DEZE" ]; then
+    printf '%s' "$SKILL" | pct exec "$CTID" -- sh -c "cat > $(q "$MAP/SKILL.md")"
+  else
+    printf '%s' "$SKILL" | $SSH root@"${ADRES[$AGENT_NODE]}" "pct exec $(q "$CTID") -- sh -c $(q "cat > $MAP/SKILL.md")"
+  fi
+  REGELS=$(op_node "$AGENT_NODE" pct exec "$CTID" -- sh -c "wc -l < $(q "$MAP/SKILL.md")" | tr -d '\r')
+  zeg "   skill proxmox-beheer geschreven: $MAP/SKILL.md ($REGELS regels)"
+  zeg "   de agent ziet hem vanaf zijn volgende sessie (of na een herstart van zijn dienst)"
+fi
+
+# --- 6. proef: wat mag de agent wel en niet? ------------------------------
+stap "6. proef vanaf de agent zelf"
 for n in $NODES; do
   mag=$(op_node "$AGENT_NODE" pct exec "$CTID" -- sh -c "$SSH -i /root/.ssh/id_ed25519 $GEBRUIKER@${ADRES[$n]} 'sudo /usr/sbin/pct list | head -3'" 2>&1 || true)
   mag_niet=$(op_node "$AGENT_NODE" pct exec "$CTID" -- sh -c "$SSH -i /root/.ssh/id_ed25519 $GEBRUIKER@${ADRES[$n]} 'sudo /usr/bin/id -u'" 2>&1 || true)
@@ -147,8 +223,8 @@ for n in $NODES; do
   fi
 done
 
-# --- 6. klaar -------------------------------------------------------------
-stap "6. klaar"
+# --- 7. klaar -------------------------------------------------------------
+stap "7. klaar"
 zeg "De agent in container $CTID (node $AGENT_NODE) kan vanaf $VANAF als $GEBRUIKER inloggen op:"
 zeg "   $(echo "$NODES" | tr '\n' ' ')"
 zeg "Zo gebruikt hij het:  ssh $GEBRUIKER@<node> 'sudo /usr/sbin/pct list'"
