@@ -223,6 +223,24 @@ Controle dat alles staat:
 node --no-warnings server.mjs controleer
 ```
 
+### De agent toegang geven tot Proxmox
+
+De agent zit in een container en ziet daar niets buiten. Wil je dat hij zelf containers kan
+nakijken of herstarten (`pct`, `qm`), geef hem dan ssh-toegang tot de nodes. Op de host, als
+root:
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/Theberas04/ploegbaas/main/deploy/proxmox/geef-proxmox-toegang.sh)"
+```
+
+Het script zoekt zelf de container met de agent (of je geeft `CTID=102` mee), maakt daar een
+sleutel in aan, zet die in `/root/.ssh/authorized_keys` van **elke** node in het cluster en
+laat aan het eind zien dat de agent vanaf zijn eigen container bij die nodes kan. Twee keer
+draaien kan geen kwaad: de tweede keer pakt hij de bestaande sleutel en zet er niets dubbel in.
+
+Let op: dit is volledige root-toegang tot de Proxmox-hosts, niet alleen `pct`. Weghalen: haal
+op elke node de regel met `hermes-ict-agent` uit `/root/.ssh/authorized_keys`.
+
 Als service (start ook na een reboot):
 
 ```bash
@@ -288,6 +306,7 @@ Eerlijke functielijst. **ja** = werkt hier · **deels** = aanwezig met een beper
 | Meldingen meteen doorgeven aan een webhook | ja | JSON per gebeurtenis, optioneel ondertekend (HMAC-SHA256); de pagina Meldingen toont wat er verstuurd is |
 | Werk meteen oppakken, zonder wachttijd | ja | Nieuwe taak of goedkeuring start de agent direct (~0,5 s) in plaats van bij de volgende hartslag |
 | Installatie op een Proxmox-server met één regel | ja | `deploy/proxmox/install.sh`: container, service, Hermes Agent erbij en het meldkanaal klaar |
+| De agent toegang geven tot de Proxmox-nodes | ja | `deploy/proxmox/geef-proxmox-toegang.sh`: sleutel in de agent-container, toegang op elke node, met een proef vanaf de agent zelf |
 | Bijwerken vanaf het dashboard | ja | Knop in de zijbalk: haalt de nieuwste versie, controleert haar, bewaart de oude in `.vorige/`, herstart en zet bij een mislukking zichzelf terug |
 | Nakijken en goedkeuren | ja | Goedkeuren of terugsturen met opmerking |
 | Routines (terugkerend werk) | ja | Interval in minuten, met een knop om er nu één te starten |
