@@ -13,7 +13,8 @@
 #   - de sleutel van de eerdere root-variant wordt uit /root/.ssh/authorized_keys gehaald
 #
 # Opties: CTID=102 (anders zoekt het script de container), VANAF=192.168.1.248 of een
-# kommalijst, GEBRUIKER=hermes. Weghalen: rm /etc/sudoers.d/hermes-ict en haal de regel
+# kommalijst, GEBRUIKER=hermes, EXTRA=192.168.1.13[,192.168.1.14] voor Proxmox-servers
+# buiten het cluster, SLEUTEL="ssh-ed25519 ..." om zelf de publieke sleutel te geven. Weghalen: rm /etc/sudoers.d/hermes-ict en haal de regel
 # met hermes-ict-agent uit /home/hermes/.ssh/authorized_keys op elke node.
 set -euo pipefail
 
@@ -25,25 +26,37 @@ q()    { printf '%q' "$1"; }   # elk argument apart quoten voor de remote shell
 GEBRUIKER=${GEBRUIKER:-hermes}
 SSH="ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8"
 
-# --- 0. het cluster --------------------------------------------------------
-stap "0. cluster"
+# --- 0. welke servers ------------------------------------------------------
+stap "0. servers"
 DEZE=$(hostname -s)
-[ -d /etc/pve/nodes ] || fout "dit is geen Proxmox-node (/etc/pve/nodes ontbreekt)"
-NODES=$(ls /etc/pve/nodes)
-zeg "   deze host: $DEZE | nodes: $(echo "$NODES" | tr '\n' ' ')"
+ZELF_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+[ -d /etc/pve ] || fout "dit is geen Proxmox-server (/etc/pve ontbreekt)"
 declare -A ADRES
-for n in $NODES; do
-  a=$(awk -v n="$n" '$1=="name:"{naam=$2} $1=="ring0_addr:"{if(naam==n){print $2; exit}}' /etc/pve/corosync.conf)
-  [ -n "$a" ] || fout "geen adres voor node $n in /etc/pve/corosync.conf"
-  ADRES[$n]=$a
-  zeg "   node $n → $a"
+DOELEN=""
+if [ -d /etc/pve/nodes ]; then
+  for n in $(ls /etc/pve/nodes); do
+    a=$(awk -v n="$n" '$1=="name:"{naam=$2} $1=="ring0_addr:"{if(naam==n){print $2; exit}}' /etc/pve/corosync.conf 2>/dev/null || true)
+    if [ -z "$a" ] && [ "$n" = "$DEZE" ]; then a=$ZELF_IP; fi
+    [ -n "$a" ] || fout "geen adres voor node $n (corosync.conf)"
+    ADRES[$n]=$a; DOELEN="$DOELEN $n"
+    zeg "   node $n → $a"
+  done
+else
+  ADRES[$DEZE]=$ZELF_IP; DOELEN="$DEZE"
+  zeg "   losse server: $DEZE → $ZELF_IP (geen cluster)"
+fi
+for ip in $(echo "${EXTRA:-}" | tr ',' ' '); do
+  [ -n "$ip" ] || continue
+  ADRES[$ip]=$ip; DOELEN="$DOELEN $ip"
+  zeg "   extra server → $ip"
 done
+zeg "   deze host: $DEZE ($ZELF_IP)"
 
-# voert een commando uit op een node: lokaal, of via ssh op de andere node.
+# voert een commando uit op een server: lokaal, of via ssh.
 # </dev/null omdat pct en ssh anders de regels van een aanroepende leeslus opeten.
-op_node() {
+op_doel() {
   local n="$1"; shift
-  if [ "$n" = "$DEZE" ]; then
+  if [ "${ADRES[$n]}" = "$ZELF_IP" ]; then
     "$@" </dev/null
   else
     $SSH root@"${ADRES[$n]}" "$(printf '%q ' "$@")" </dev/null
@@ -53,36 +66,40 @@ op_node() {
 # --- 1. de container met de agent -----------------------------------------
 stap "1. waar staat de agent?"
 AGENT_NODE=""
-if [ -n "${CTID:-}" ]; then
+if [ -n "${SLEUTEL:-}" ]; then
+  zeg "   eigen sleutel opgegeven (geen agent-container nodig)"
+elif [ -n "${CTID:-}" ]; then
   zeg "   CTID=$CTID (zelf opgegeven)"
-  for n in $NODES; do
-    if op_node "$n" pct status "$CTID" >/dev/null 2>&1; then AGENT_NODE=$n; fi
+  for n in $DOELEN; do
+    if op_doel "$n" pct status "$CTID" >/dev/null 2>&1; then AGENT_NODE=$n; fi
   done
   [ -n "$AGENT_NODE" ] || fout "container $CTID bestaat niet in dit cluster"
 else
-  for n in $NODES; do
+  for n in $DOELEN; do
     zeg "   -- node $n --"
     while read -r cid status naam; do
       [ "$status" = "running" ] || continue
-      if op_node "$n" pct exec "$cid" -- sh -c 'grep -qs API_SERVER_KEY /home/hermes/.hermes/.env /root/.hermes/.env' 2>/dev/null; then
+      if op_doel "$n" pct exec "$cid" -- sh -c 'grep -qs API_SERVER_KEY /home/hermes/.hermes/.env /root/.hermes/.env' 2>/dev/null; then
         zeg "      container $cid ($naam): Hermes-agent ja"
         if [ -z "$AGENT_NODE" ]; then AGENT_NODE=$n; CTID=$cid; fi
       else
         zeg "      container $cid ($naam): nee"
       fi
-    done < <(op_node "$n" pct list 2>/dev/null | awk 'NR>1 && $1 ~ /^[0-9]+$/ {print $1, $2, $NF}')
+    done < <(op_doel "$n" pct list 2>/dev/null | awk 'NR>1 && $1 ~ /^[0-9]+$/ {print $1, $2, $NF}')
   done
   [ -n "$AGENT_NODE" ] || fout "geen draaiende container met een Hermes-agent gevonden; geef CTID=... mee"
 fi
-zeg "   gevonden: node $AGENT_NODE, container $CTID"
+if [ -z "${SLEUTEL:-}" ]; then zeg "   gevonden: node $AGENT_NODE, container $CTID"; fi
 
 # --- 2. een sleutel in de container ---------------------------------------
 stap "2. sleutel in de container"
-op_node "$AGENT_NODE" pct exec "$CTID" -- sh -c 'command -v ssh-keygen >/dev/null 2>&1 || { apt-get update -qq && apt-get install -y -qq openssh-client; }'
-SLEUTEL=$(op_node "$AGENT_NODE" pct exec "$CTID" -- cat /root/.ssh/id_ed25519.pub 2>/dev/null || true)
+if [ -z "${SLEUTEL:-}" ]; then
+  op_doel "$AGENT_NODE" pct exec "$CTID" -- sh -c 'command -v ssh-keygen >/dev/null 2>&1 || { apt-get update -qq && apt-get install -y -qq openssh-client; }' || true
+  SLEUTEL=$(op_doel "$AGENT_NODE" pct exec "$CTID" -- cat /root/.ssh/id_ed25519.pub 2>/dev/null || true)
+fi
 if [ -z "$SLEUTEL" ]; then
-  op_node "$AGENT_NODE" pct exec "$CTID" -- sh -c 'mkdir -p /root/.ssh && chmod 700 /root/.ssh && ssh-keygen -q -t ed25519 -N "" -C "hermes-ict-agent@$(hostname)" -f /root/.ssh/id_ed25519'
-  SLEUTEL=$(op_node "$AGENT_NODE" pct exec "$CTID" -- cat /root/.ssh/id_ed25519.pub)
+  op_doel "$AGENT_NODE" pct exec "$CTID" -- sh -c 'mkdir -p /root/.ssh && chmod 700 /root/.ssh && ssh-keygen -q -t ed25519 -N "" -C "hermes-ict-agent@$(hostname)" -f /root/.ssh/id_ed25519'
+  SLEUTEL=$(op_doel "$AGENT_NODE" pct exec "$CTID" -- cat /root/.ssh/id_ed25519.pub)
   zeg "   nieuwe sleutel gemaakt"
 else
   zeg "   bestaande sleutel gebruikt"
@@ -90,16 +107,20 @@ fi
 [ -n "$SLEUTEL" ] || fout "kon geen sleutel in container $CTID maken"
 zeg "   $(echo "$SLEUTEL" | awk '{print $1, substr($2,1,16)"…", $3}')"
 # ook beschikbaar maken voor de gebruiker(s) in de container, niet alleen root
-op_node "$AGENT_NODE" pct exec "$CTID" -- sh -c 'for h in /home/*; do [ -d "$h" ] || continue; u=$(basename "$h"); mkdir -p "$h/.ssh" && chmod 700 "$h/.ssh"; cp -n /root/.ssh/id_ed25519 "$h/.ssh/id_ed25519" 2>/dev/null || true; cp -n /root/.ssh/id_ed25519.pub "$h/.ssh/id_ed25519.pub" 2>/dev/null || true; chown -R "$u:$u" "$h/.ssh" 2>/dev/null || true; chmod 600 "$h/.ssh/id_ed25519" 2>/dev/null || true; done; true'
+if [ -n "$AGENT_NODE" ]; then
+op_doel "$AGENT_NODE" pct exec "$CTID" -- sh -c 'for h in /home/*; do [ -d "$h" ] || continue; u=$(basename "$h"); mkdir -p "$h/.ssh" && chmod 700 "$h/.ssh"; cp -n /root/.ssh/id_ed25519 "$h/.ssh/id_ed25519" 2>/dev/null || true; cp -n /root/.ssh/id_ed25519.pub "$h/.ssh/id_ed25519.pub" 2>/dev/null || true; chown -R "$u:$u" "$h/.ssh" 2>/dev/null || true; chmod 600 "$h/.ssh/id_ed25519" 2>/dev/null || true; done; true'
+fi
 
 # --- 3. vanaf welk adres mag de sleutel werken? ---------------------------
 stap "3. vanaf welk adres mag de sleutel werken?"
-if [ -z "${VANAF:-}" ]; then
-  VANAF=$(op_node "$AGENT_NODE" pct exec "$CTID" -- sh -c "hostname -I 2>/dev/null | awk '{print \$1}'" | tr -d '\r' || true)
+if [ -n "${VANAF:-}" ]; then
+  zeg "   zelf opgegeven: $VANAF"
+elif [ -n "$AGENT_NODE" ]; then
+  VANAF=$(op_doel "$AGENT_NODE" pct exec "$CTID" -- sh -c "hostname -I 2>/dev/null | awk '{print \$1}'" | tr -d '\r' || true)
   [ -n "$VANAF" ] || fout "kon het adres van container $CTID niet bepalen; geef VANAF=... mee"
   zeg "   automatisch: $VANAF (het adres van container $CTID)"
 else
-  zeg "   zelf opgegeven: $VANAF"
+  fout "geef VANAF=<adres van de agent-container> mee"
 fi
 
 # --- 4. toegang op elke node ----------------------------------------------
@@ -122,8 +143,8 @@ mv -f /etc/sudoers.d/hermes-ict.tmp /etc/sudoers.d/hermes-ict
 if [ -f /root/.ssh/authorized_keys ]; then sed -i '/hermes-ict-agent/d' /root/.ssh/authorized_keys; fi
 EINDE
 )
-for n in $NODES; do
-  if [ "$n" = "$DEZE" ]; then
+for n in $DOELEN; do
+  if [ "${ADRES[$n]}" = "$ZELF_IP" ]; then
     if bash -c "$REGELS"; then zeg "   node $n: gebruiker $GEBRUIKER + sudo pct/qm geregeld"; else zeg "   node $n: NIET gelukt"; fi
   else
     if $SSH root@"${ADRES[$n]}" "$REGELS"; then zeg "   node $n: gebruiker $GEBRUIKER + sudo pct/qm geregeld"; else zeg "   node $n: NIET gelukt"; fi
@@ -132,13 +153,16 @@ done
 
 # --- 5. de agent vertellen hoe hij het gebruikt ----------------------------
 stap "5. de agent de gegevens geven"
-SKILL_MAP=$(op_node "$AGENT_NODE" pct exec "$CTID" -- sh -c 'if [ -d /home/hermes/.hermes ]; then echo /home/hermes/.hermes/skills; elif [ -d /root/.hermes ]; then echo /root/.hermes/skills; else echo ""; fi' | tr -d '\r')
+if [ -z "$AGENT_NODE" ]; then SKILL_MAP=""; else SKILL_MAP=$(op_doel "$AGENT_NODE" pct exec "$CTID" -- sh -c 'if [ -d /home/hermes/.hermes ]; then echo /home/hermes/.hermes/skills; elif [ -d /root/.hermes ]; then echo /root/.hermes/skills; else echo ""; fi' | tr -d '\r'); fi
 if [ -z "$SKILL_MAP" ]; then
-  zeg "   geen .hermes-map in container $CTID gevonden; sla de skill over"
+  zeg "   geen agent-container of geen .hermes-map gevonden; sla de skill over"
 else
   TABEL=""
-  for n in $NODES; do TABEL="$TABEL| \`$n\` | ${ADRES[$n]} |
-"; done
+  for n in $DOELEN; do
+    if [ "$n" = "${ADRES[$n]}" ]; then TABEL="$TABEL| losse server | ${ADRES[$n]} |
+"; else TABEL="$TABEL| \`$n\` | ${ADRES[$n]} |
+"; fi
+  done
   SKILL=$(cat <<'EINDE'
 ---
 name: proxmox-beheer
@@ -195,22 +219,26 @@ EINDE
 )
   SKILL=${SKILL//@TABEL@/$TABEL}
   MAP="$SKILL_MAP/proxmox-beheer"
-  op_node "$AGENT_NODE" pct exec "$CTID" -- sh -c "mkdir -p $(q "$MAP")"
-  if [ "$AGENT_NODE" = "$DEZE" ]; then
+  op_doel "$AGENT_NODE" pct exec "$CTID" -- sh -c "mkdir -p $(q "$MAP")"
+  if [ "${ADRES[$AGENT_NODE]}" = "$ZELF_IP" ]; then
     printf '%s' "$SKILL" | pct exec "$CTID" -- sh -c "cat > $(q "$MAP/SKILL.md")"
   else
     printf '%s' "$SKILL" | $SSH root@"${ADRES[$AGENT_NODE]}" "pct exec $(q "$CTID") -- sh -c $(q "cat > $MAP/SKILL.md")"
   fi
-  REGELS=$(op_node "$AGENT_NODE" pct exec "$CTID" -- sh -c "wc -l < $(q "$MAP/SKILL.md")" | tr -d '\r')
+  REGELS=$(op_doel "$AGENT_NODE" pct exec "$CTID" -- sh -c "wc -l < $(q "$MAP/SKILL.md")" | tr -d '\r')
   zeg "   skill proxmox-beheer geschreven: $MAP/SKILL.md ($REGELS regels)"
   zeg "   de agent ziet hem vanaf zijn volgende sessie (of na een herstart van zijn dienst)"
 fi
 
 # --- 6. proef: wat mag de agent wel en niet? ------------------------------
 stap "6. proef vanaf de agent zelf"
-for n in $NODES; do
-  mag=$(op_node "$AGENT_NODE" pct exec "$CTID" -- sh -c "$SSH -i /root/.ssh/id_ed25519 $GEBRUIKER@${ADRES[$n]} 'sudo /usr/sbin/pct list | head -3'" 2>&1 || true)
-  mag_niet=$(op_node "$AGENT_NODE" pct exec "$CTID" -- sh -c "$SSH -i /root/.ssh/id_ed25519 $GEBRUIKER@${ADRES[$n]} 'sudo /usr/bin/id -u'" 2>&1 || true)
+if [ -z "$AGENT_NODE" ]; then
+  zeg "   geen agent-container gevonden; proef overgeslagen — de sleutel staat op de servers"
+fi
+if [ -n "$AGENT_NODE" ]; then
+for n in $DOELEN; do
+  mag=$(op_doel "$AGENT_NODE" pct exec "$CTID" -- sh -c "$SSH -i /root/.ssh/id_ed25519 $GEBRUIKER@${ADRES[$n]} 'sudo /usr/sbin/pct list | head -3'" 2>&1 || true)
+  mag_niet=$(op_doel "$AGENT_NODE" pct exec "$CTID" -- sh -c "$SSH -i /root/.ssh/id_ed25519 $GEBRUIKER@${ADRES[$n]} 'sudo /usr/bin/id -u'" 2>&1 || true)
   if echo "$mag" | grep -q "VMID"; then
     zeg "   node $n: pct mag — $(echo "$mag" | tail -n +2 | head -1 | tr -s ' ')"
   else
@@ -222,11 +250,16 @@ for n in $NODES; do
     zeg "   node $n: LET OP, 'id -u' gaf: $(echo "$mag_niet" | tr '\n' ' ')"
   fi
 done
+fi
 
 # --- 7. klaar -------------------------------------------------------------
 stap "7. klaar"
-zeg "De agent in container $CTID (node $AGENT_NODE) kan vanaf $VANAF als $GEBRUIKER inloggen op:"
-zeg "   $(echo "$NODES" | tr '\n' ' ')"
+if [ -n "$AGENT_NODE" ]; then
+  zeg "De agent in container $CTID (node $AGENT_NODE) kan vanaf $VANAF als $GEBRUIKER inloggen op:"
+else
+  zeg "Er kan vanaf $VANAF als $GEBRUIKER worden ingelogd op:"
+fi
+zeg "   $DOELEN"
 zeg "Zo gebruikt hij het:  ssh $GEBRUIKER@<node> 'sudo /usr/sbin/pct list'"
 zeg "Hij komt daarmee aan containers en VM's, maar niet aan de host zelf."
 zeg "Weghalen: rm /etc/sudoers.d/hermes-ict en haal de regel met hermes-ict-agent uit"

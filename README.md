@@ -242,6 +242,12 @@ sleutel in aan en zet op **elke** node in het cluster:
 - sudo voor precies twee dingen: `/usr/sbin/pct` en `/usr/sbin/qm`. De agent beheert dus
   containers en VM's, maar komt niet aan de host zelf: geen bestanden buiten de containers,
   geen netwerk, geen pakketten.
+- **Een Proxmox-server buiten het cluster** (zoals `192.168.1.13`) zet je er met `EXTRA=` bij:
+  `EXTRA=192.168.1.13 bash -c "…"`. Het script doet daar hetzelfde en die server komt in de
+  skill van de agent erbij. Kan de node er niet als root bij, dan zegt het dat — draai het
+  script dan op die server zelf, met `VANAF=<adres van de agent-container>` en
+  `SLEUTEL="<publieke sleutel van de agent>"`. Op een losse Proxmox zonder cluster werkt het
+  script ook: het leest dan alleen de eigen host.
 
 Aan het eind laat het script vanaf de agent zelf zien dat `pct` werkt én dat iets anders dan
 `pct`/`qm` geweigerd wordt. Het schrijft ook een skill (`proxmox-beheer`) in de container van de
