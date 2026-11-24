@@ -650,6 +650,52 @@ async function agentProef(lijf) {
   }
 }
 
+// Snel koppelen: één klik in plaats van het vierstappenformulier. Pakt wat deze
+// machine al weet (Hermes gevonden, standaardmodel) en toetst eerst met een echte
+// proef. Lukt de proef niet, dan wordt er niets aangemaakt — tenzij je 'toch' meegeeft.
+async function snelKoppelen(lijf = {}) {
+  const o = await ontdekKoppeling();
+  if (!o.hermes.gevonden) {
+    throw new Error('Hermes is niet gevonden op deze machine. Gebruik het volledige formulier om een eigen commando of endpoint te koppelen.');
+  }
+  const model = String(lijf.model || o.standaard_model || (o.modellen[0] && o.modellen[0].naam) || '').trim();
+  const adapter_config = {
+    commando: o.hermes.pad || 'hermes',
+    args: ['chat', '-q'],
+    timeout_seconden: Number(lijf.timeout_seconden || 1800),
+  };
+  // Naam uniek houden, anders staan er straks twee 'Hermes' in de lijst.
+  let naam = String(lijf.naam || 'Hermes').trim() || 'Hermes';
+  const bestaat = (n) => db.prepare('SELECT 1 AS n FROM agent WHERE naam = ?').get(n);
+  if (bestaat(naam)) {
+    let i = 2;
+    while (bestaat(`${naam} ${i}`)) i += 1;
+    naam = `${naam} ${i}`;
+  }
+  const proef = await agentProef({ adapter: 'hermes', model, adapter_config });
+  const samenvatting = {
+    hermes: o.hermes, model,
+    llm: o.llm ? { bereikbaar: o.llm.bereikbaar, url: o.llm.url } : null,
+  };
+  if (!proef.ok && !lijf.toch) {
+    return { ok: false, gekoppeld: false, proef, ontdek: samenvatting,
+      hint: 'De proef antwoordde niet. Los dat eerst op, of koppel toch met "toch": true.' };
+  }
+  const bedrijf = db.prepare('SELECT id FROM bedrijf ORDER BY id LIMIT 1').get();
+  if (!bedrijf) throw new Error('Er is nog geen bedrijf.');
+  const heartbeat_aan = lijf.heartbeat_aan === undefined ? 1 : (lijf.heartbeat_aan ? 1 : 0);
+  db.prepare(`INSERT INTO agent (bedrijf_id, naam, rol, titel, adapter, adapter_config, model, status,
+              budget_maand_centen, heartbeat_aan, heartbeat_minuten, aangemaakt)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(bedrijf.id, naam, lijf.rol || 'algemeen', lijf.titel || '', 'hermes',
+      JSON.stringify(adapter_config), model, 'actief',
+      Number(lijf.budget_maand_centen || 0), heartbeat_aan, Number(lijf.heartbeat_minuten || 30), nu());
+  const id = rij();
+  logActiviteit('agent', `${naam} is in één klik gekoppeld (proef ${proef.ok ? 'geslaagd' : 'mislukt, toch gekoppeld'}).`, { agentId: id });
+  const agent = db.prepare('SELECT * FROM agent WHERE id = ?').get(id);
+  return { ok: true, gekoppeld: true, agent, proef, ontdek: samenvatting };
+}
+
 // Waar de code vandaan komt: dezelfde repo als de installatiekit.
 const REPO = process.env.PLOEGBAAS_REPO || 'Theberas04/ploegbaas';
 const TAK = process.env.PLOEGBAAS_TAK || 'main';
@@ -880,6 +926,16 @@ async function verwerk(verzoek, antwoord) {
         return fout(antwoord, 400, proeffout.message);
       }
     }
+    // Eén klik: zoek de instellingen zelf op, toets met een proef en koppel.
+    if (delen[1] === 'agenten' && methode === 'POST' && delen[2] === 'snelkoppelen') {
+      const lijf = await leesLijf(verzoek);
+      try {
+        const uitslag = await snelKoppelen(lijf);
+        return stuur(antwoord, uitslag.gekoppeld ? 201 : 200, uitslag);
+      } catch (koppelfout) {
+        return fout(antwoord, 400, koppelfout.message);
+      }
+    }
     const agent = db.prepare('SELECT * FROM agent WHERE id = ?').get(Number(delen[2]));
     if (!agent) return fout(antwoord, 404, 'Agent bestaat niet.');
     if (methode === 'GET') return stuur(antwoord, 200, agent);
@@ -934,16 +990,24 @@ async function verwerk(verzoek, antwoord) {
       const bedrijf = db.prepare('SELECT id FROM bedrijf ORDER BY id LIMIT 1').get();
       if (!bedrijf) return fout(antwoord, 400, 'Er is nog geen bedrijf.');
       const tijd = nu();
+      // Zonder agent_id gaat de taak naar de standaardagent (Instellingen →
+      // Nieuwe taken). Zo komen tickets vanzelf bij de juiste collega terecht
+      // in plaats van op de stapel 'niet toegewezen'.
+      let agentId = lijf.agent_id ? Number(lijf.agent_id) : null;
+      if (!agentId) {
+        const standaard = Number(instelling('standaard_agent') || 0);
+        if (standaard && db.prepare('SELECT 1 AS n FROM agent WHERE id = ?').get(standaard)) agentId = standaard;
+      }
       db.prepare(`INSERT INTO taak (bedrijf_id, titel, omschrijving, status, prioriteit, agent_id, labels, ouder_id, aangemaakt, bijgewerkt)
                   VALUES (?,?,?,?,?,?,?,?,?,?)`)
         .run(lijf.bedrijf_id || bedrijf.id, lijf.titel, lijf.omschrijving || '',
           mag(lijf.status, ['nieuw', 'bezig', 'review', 'klaar', 'geblokkeerd'], 'nieuw'),
           mag(lijf.prioriteit, ['laag', 'normaal', 'hoog'], 'normaal'),
-          lijf.agent_id ? Number(lijf.agent_id) : null, lijf.labels || '', lijf.ouder_id ? Number(lijf.ouder_id) : null, tijd, tijd);
+          agentId, lijf.labels || '', lijf.ouder_id ? Number(lijf.ouder_id) : null, tijd, tijd);
       const id = rij();
       logActiviteit('taak', `Nieuwe taak ${id}: ${lijf.titel}`, { taakId: id });
-      meld('taak-nieuw', `Nieuwe taak ${id}: ${lijf.titel}`, { agentId: lijf.agent_id ? Number(lijf.agent_id) : null, taakId: id });
-      if (lijf.agent_id) planNu();
+      meld('taak-nieuw', `Nieuwe taak ${id}: ${lijf.titel}`, { agentId, taakId: id });
+      if (agentId) planNu();
       return stuur(antwoord, 201, taakMetRelaties(id));
     }
     const taak = db.prepare('SELECT * FROM taak WHERE id = ?').get(Number(delen[2]));
@@ -1004,6 +1068,7 @@ async function verwerk(verzoek, antwoord) {
         aan: instelling('melden_aan', process.env.PLOEGBAAS_MELDWEBHOOK ? '1' : '0') === '1',
         kanaal: instelling('meld_kanaal', process.env.PLOEGBAAS_MELDWEBHOOK || ''),
         geheim_ingesteld: Boolean(instelling('meld_geheim', '')),
+        standaard_agent: Number(instelling('standaard_agent') || 0),
         lijst: db.prepare('SELECT * FROM melding ORDER BY id DESC LIMIT 60').all(),
       });
     }
@@ -1017,8 +1082,17 @@ async function verwerk(verzoek, antwoord) {
     if (lijf.melden_aan !== undefined) zetInstelling('melden_aan', lijf.melden_aan ? '1' : '0');
     if (lijf.meld_kanaal !== undefined) zetInstelling('meld_kanaal', String(lijf.meld_kanaal).trim());
     if (lijf.meld_geheim !== undefined) zetInstelling('meld_geheim', String(lijf.meld_geheim));
+    if (lijf.standaard_agent !== undefined) {
+      const id = Number(lijf.standaard_agent) || 0;
+      if (id && !db.prepare('SELECT 1 AS n FROM agent WHERE id = ?').get(id)) return fout(antwoord, 400, 'Die agent bestaat niet.');
+      zetInstelling('standaard_agent', String(id));
+      logActiviteit('instelling', id
+        ? `Nieuwe taken gaan naar ${db.prepare('SELECT naam FROM agent WHERE id = ?').get(id).naam}.`
+        : 'Nieuwe taken worden niet meer automatisch toegewezen.');
+    }
     logActiviteit('instelling', 'Meldkanaal bijgewerkt.');
-    return stuur(antwoord, 200, { ok: true, aan: instelling('melden_aan') === '1', kanaal: instelling('meld_kanaal') });
+    return stuur(antwoord, 200, { ok: true, aan: instelling('melden_aan') === '1', kanaal: instelling('meld_kanaal'),
+      standaard_agent: Number(instelling('standaard_agent') || 0) });
   }
 
   // ------- versie en bijwerken

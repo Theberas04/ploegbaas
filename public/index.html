@@ -143,7 +143,7 @@ const S = {
   pad: location.hash.replace(/^#/, '') || '/dashboard',
   ingelogd: null, overzicht: null, taken: [], agenten: [], runs: [], goedkeuringen: [],
   routines: [], activiteit: [], bedrijven: [], taak: null, runLog: null, filterStatus: '', zoek: '',
-  ontdek: null, agentAdapter: null,
+  ontdek: null, agentAdapter: null, snelUitslag: '',
   versie: null, bijwerkenOpen: false, bijwerkLog: null, pollt: false,
 };
 
@@ -321,13 +321,15 @@ function tekenLijst() {
 }
 
 function nieuweTaak() {
+  const standaard = Number((S.meldingen && S.meldingen.standaard_agent) || 0);
   document.getElementById('formulier').innerHTML = `<div class="paneel" style="margin-top:16px;padding:16px">
     <h2 style="margin-top:0">Nieuwe taak</h2>
     <div class="veld"><label>Titel</label><input id="t-titel" placeholder="Wat moet er gebeuren?"></div>
     <div class="veld"><label>Omschrijving</label><textarea id="t-oms" placeholder="Context, eisen, waar het resultaat heen moet…"></textarea></div>
     <div class="rij">
       <div class="veld"><label>Agent</label><select id="t-agent"><option value="">— niet toegewezen —</option>
-        ${S.agenten.map((a) => `<option value="${a.id}">${esc(a.naam)}</option>`).join('')}</select></div>
+        ${S.agenten.map((a) => `<option value="${a.id}"${a.id === standaard ? ' selected' : ''}>${esc(a.naam)}</option>`).join('')}</select>
+        <div class="zacht" style="font-size:12px;margin-top:6px">${standaard ? 'Standaard: ' + esc((S.agenten.find((a) => a.id === standaard) || {}).naam || '') + ' — te wijzigen bij Meldingen → Nieuwe taken.' : 'Nog geen standaardagent; stel die in bij Meldingen → Nieuwe taken.'}</div></div>
       <div class="veld"><label>Prioriteit</label><select id="t-prio"><option value="normaal">normaal</option>
         <option value="hoog">hoog</option><option value="laag">laag</option></select></div>
       <div class="veld"><label>Labels</label><input id="t-labels" placeholder="bijv. website"></div>
@@ -450,10 +452,12 @@ function tekenAgenten() {
   return `<main>
     <h1>Agenten</h1>
     <p class="onder">Koppelen in vier stappen: hoe hij werkt, wie hij is, waarmee en hoeveel — en dan een echte proef.</p>
-    <div class="toolbar"><button class="knop" onclick="nieuweAgent()">Agent koppelen</button>
+    <div class="toolbar"><button class="knop" onclick="snelKoppelen()" id="snelknop">Snel koppelen</button>
+      <button class="knop los" onclick="nieuweAgent()">Zelf samenstellen</button>
       ${o ? `<span class="rechtstoolbar zacht" style="font-size:12px;margin-left:12px">${
         o.hermes.gevonden ? 'Hermes gevonden: ' + esc(o.hermes.versie || o.hermes.pad) : 'Hermes niet gevonden op deze machine'
       }${o.llm && o.llm.bereikbaar ? ' · eigen model op ' + esc(o.llm.url) : ''}</span>` : ''}</div>
+    <div id="sneluitslag">${S.snelUitslag || ''}</div>
     <div class="paneel"><table>
       <thead><tr><th>Agent</th><th>Adapter</th><th>Model</th><th>Hartslag</th><th>Status</th><th>Laatste run</th><th></th></tr></thead>
       <tbody>${S.agenten.map((a) => `<tr>
@@ -479,6 +483,9 @@ function tekenAgenten() {
   </main>`;
 }
 
+// De configuratie van de agent die je in het formulier hebt geopend: velden die
+// geen eigen invoerveld hebben (zoals `omgeving`) blijven zo bewaard bij opslaan.
+let bewaardeAgentConfig = {};
 const AGENT_ADAPTERS = [
   { id: 'hermes', naam: 'Hermes Agent op deze machine', zin: 'Start de Hermes-CLI met de taak als opdracht. Zo werken de agents hier.' },
   { id: 'opdracht', naam: 'Een eigen commando', zin: 'Draait je eigen script of CLI; de taak komt mee als argument en in PLOEGBAAS_TAAK_OMSCHRIJVING.' },
@@ -513,6 +520,7 @@ function zorgOntdek() {
 
 function agentFormulier(a = {}) {
   const c = a.adapter_config ? JSON.parse(a.adapter_config || '{}') : {};
+  bewaardeAgentConfig = c;   // omgeving e.d. bewaren bij het opslaan (zie adapterConfigUitVelden)
   const adapter = a.adapter || S.agentAdapter || 'hermes';
   S.agentAdapter = adapter;
   const o = S.ontdek || {};
@@ -537,6 +545,9 @@ function agentFormulier(a = {}) {
           <div class="veld"><label>Commando</label><input id="a-commando-o" value="${esc(c.commando || '')}" placeholder="/home/iemand/mijn-script.sh"></div>
           <div class="veld"><label>Argumenten (spatie ertussen)</label><input id="a-args-o" value="${esc(args)}" placeholder="--stil"></div>
         </div>
+        <div class="veld"><label>Omgeving (JSON, mag leeg blijven)</label>
+          <textarea id="a-omgeving-o" rows="3" placeholder='{"MIJN_URL": "http://192.168.1.50:8642"}'>${esc(c.omgeving && Object.keys(c.omgeving).length ? JSON.stringify(c.omgeving) : '')}</textarea>
+          <div class="zacht" style="font-size:12px;margin-top:6px">Extra omgevingsvariabelen voor dit commando, bijvoorbeeld het adres en het sleutelbestand van een agent elders. Zonder dit vak overschrijf je ze bij het opslaan niet meer — ze blijven bewaard.</div></div>
         <div class="zacht" style="font-size:12px">De opdracht komt als laatste argument mee, en als <code>PLOEGBAAS_TAAK_OMSCHRIJVING</code> in de omgeving.</div>
       </div>
       <div id="velden-http" class="adaptervelden" style="display:${adapter === 'http' ? 'block' : 'none'}">
@@ -604,6 +615,45 @@ function nieuweAgent() {
   document.getElementById('agentformulier').scrollIntoView({ behavior: 'smooth' });
 }
 
+// Snel koppelen: de server zoekt zelf uit hoe deze machine werkt (Hermes gevonden,
+// standaardmodel) en toetst met één echte proef. Lukt die, dan staat de agent erin.
+async function snelKoppelen(toch = false) {
+  const knop = document.getElementById('snelknop');
+  const vak = document.getElementById('sneluitslag');
+  if (knop) { knop.disabled = true; knop.textContent = 'Koppelen…'; }
+  if (vak) vak.innerHTML = '<div class="proef zacht">Bezig: instellingen opzoeken en één proefopdracht laten uitvoeren. Bij een eigen (lokaal) model kan dit een halve minuut duren.</div>';
+  try {
+    const r = await api('/agenten/snelkoppelen', { method: 'POST', lijf: { toch } });
+    S.snelUitslag = uitslagSnel(r);
+    if (r.gekoppeld) await laadAlles();
+    else teken();
+  } catch (fout) {
+    S.snelUitslag = `<div class="proef fout">${esc(fout.message)}</div>`;
+    teken();
+  } finally {
+    const k2 = document.getElementById('snelknop');
+    if (k2) { k2.disabled = false; k2.textContent = 'Snel koppelen'; }
+  }
+}
+
+function uitslagSnel(r) {
+  const duur = (Number(r.proef?.duur_ms || 0) / 1000).toFixed(1).replace('.', ',');
+  if (r.gekoppeld) {
+    const a = r.agent || {};
+    return `<div class="proef goed"><b>Gekoppeld: ${esc(a.naam || '')}</b>
+      <span class="zacht"> · proef ${r.proef?.ok ? 'geslaagd' : 'mislukt, toch gekoppeld'} in ${duur} s · model ${esc(a.model || 'eigen keuze')} · hartslag ${a.heartbeat_aan ? 'elke ' + a.heartbeat_minuten + ' min' : 'uit'}</span>
+      <div class="zacht" style="margin-top:6px">Hij staat nu in de lijst. Maak een taak en wijs hem aan ${esc(a.naam || 'deze agent')} toe; de hartslag pakt hem meteen op.</div></div>`;
+  }
+  return `<div class="proef fout"><b>Nog niet gekoppeld</b>
+    <span class="zacht"> · de proef antwoordde niet (${duur} s, code ${esc(String(r.proef?.code ?? ''))})</span>
+    ${r.proef?.fout ? `<div style="margin-top:6px">${esc(r.proef.fout)}</div>` : ''}
+    ${r.proef?.uitvoer ? `<div class="logvak" style="max-height:110px;margin-top:8px">${esc(r.proef.uitvoer)}</div>` : ''}
+    <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+      <button class="knop los klein" onclick="snelKoppelen(true)">Toch koppelen</button>
+      <button class="knop los klein" onclick="nieuweAgent()">Zelf samenstellen</button>
+    </div></div>`;
+}
+
 function bewerkAgent(id) {
   const a = S.agenten.find((x) => x.id === id);
   S.agentAdapter = a.adapter;
@@ -617,11 +667,25 @@ function adapterConfigUitVelden() {
   if (a === 'http') return { url: document.getElementById('a-url-w').value.trim(), timeout_seconden: timeout };
   if (a === 'opdracht') {
     const argsTekst = (document.getElementById('a-args-o').value || '').trim();
-    return {
+    const omgevingTekst = (document.getElementById('a-omgeving-o')?.value || '').trim();
+    let omgeving;
+    if (omgevingTekst) {
+      try { omgeving = JSON.parse(omgevingTekst); }
+      catch { alert('De omgeving is geen geldige JSON. Laat het vak leeg of zet er bijvoorbeeld {"URL": "http://…"} in.'); return null; }
+      if (!omgeving || typeof omgeving !== 'object' || Array.isArray(omgeving)) { alert('De omgeving moet een JSON-object zijn, bijvoorbeeld {"URL": "http://…"}.'); return null; }
+    }
+    // Zonder dit blijft de omgeving van een gekoppelde agent elders bewaard in
+    // plaats van hem bij elke opslag te wissen; het vak hierboven is de enige
+    // plek waar je hem nog ziet en aanpast.
+    const vorige = bewaardeAgentConfig.omgeving || {};
+    const samen = { ...vorige, ...(omgeving || {}) };
+    const uit = {
       commando: document.getElementById('a-commando-o').value.trim(),
       args: argsTekst ? argsTekst.split(/\s+/) : [],
       timeout_seconden: timeout,
     };
+    if (Object.keys(samen).length) uit.omgeving = samen;
+    return uit;
   }
   return {
     commando: document.getElementById('a-commando-h').value.trim() || 'hermes',
@@ -655,7 +719,9 @@ async function testAgent() {
   if (knop) { knop.disabled = true; knop.textContent = 'Testen…'; }
   if (vak) { vak.className = 'proef zacht'; vak.textContent = 'Bezig — bij een eigen (lokaal) model kan dit een halve minuut duren.'; }
   try {
-    toonProef(await api('/agenten/proef', { method: 'POST', lijf: proefLijf() }));
+    const lijf = proefLijf();
+    if (!lijf || !lijf.adapter_config) { if (vak) { vak.className = 'proef fout'; vak.textContent = 'De agent-configuratie klopt niet; zie de melding hierboven.'; } return; }
+    toonProef(await api('/agenten/proef', { method: 'POST', lijf }));
   } catch (fout) {
     if (vak) { vak.className = 'proef fout'; vak.textContent = fout.message; }
   } finally {
@@ -674,6 +740,7 @@ async function bewaarAgent(id) {
     budget_maand_centen: Math.round(Number(document.getElementById('a-budget').value || 0) * 100),
   };
   if (!lijf.naam) return alert('Geef de agent eerst een naam.');
+  if (!lijf.adapter_config) return;   // de melding stond al in het formulier
   if (lijf.adapter === 'http' && !lijf.adapter_config.url) return alert('Vul het adres van je endpoint in.');
   if (lijf.adapter === 'opdracht' && !lijf.adapter_config.commando) return alert('Vul het commando in dat deze agent moet draaien.');
   const uitslag = document.getElementById('proefuitslag');
@@ -759,12 +826,13 @@ function tekenRoutines() {
   </main>`;
 }
 function nieuweRoutine() {
+  const standaard = Number((S.meldingen && S.meldingen.standaard_agent) || 0);
   document.getElementById('routineformulier').innerHTML = `<div class="paneel" style="margin-top:16px;padding:16px">
     <h2 style="margin-top:0">Nieuwe routine</h2>
     <div class="rij">
       <div class="veld"><label>Naam</label><input id="r-naam" placeholder="Dagelijkse controle"></div>
       <div class="veld"><label>Agent</label><select id="r-agent"><option value="">—</option>
-        ${S.agenten.map((a) => `<option value="${a.id}">${esc(a.naam)}</option>`).join('')}</select></div>
+        ${S.agenten.map((a) => `<option value="${a.id}"${a.id === standaard ? ' selected' : ''}>${esc(a.naam)}</option>`).join('')}</select></div>
       <div class="veld"><label>Elke (minuten)</label><input id="r-interval" type="number" value="1440"></div>
     </div>
     <div class="veld"><label>Taaktitel</label><input id="r-titel" placeholder="Dagelijkse controle van de apps"></div>
@@ -829,7 +897,19 @@ function tekenMeldingen() {
         </tr>`).join('') || '<tr><td colspan="3" class="leeg">Nog niets gemeld.</td></tr>'}</tbody></table>
       </div>
     </div>
+    <div class="paneel" style="padding:16px;margin-top:16px">
+      <h2 style="margin-top:0">Nieuwe taken</h2>
+      <p class="zacht" style="margin-top:0">Taken die je aanmaakt zonder agent erbij komen bij deze collega terecht.</p>
+      <div class="veld"><label>Standaardagent</label><select id="m-standaard">
+        <option value="0"${Number(m.standaard_agent || 0) ? '' : ' selected'}>— niet automatisch toewijzen —</option>
+        ${S.agenten.map((a) => `<option value="${a.id}"${a.id === Number(m.standaard_agent || 0) ? ' selected' : ''}>${esc(a.naam)}</option>`).join('')}</select></div>
+      <button class="knop" onclick="bewaarStandaardAgent()">Opslaan</button>
+    </div>
   </main>`;
+}
+async function bewaarStandaardAgent() {
+  await api('/instellingen', { method: 'PATCH', lijf: { standaard_agent: document.getElementById('m-standaard').value } });
+  await laadAlles();
 }
 async function bewaarMeldkanaal() {
   const geheim = document.getElementById('m-geheim').value;
